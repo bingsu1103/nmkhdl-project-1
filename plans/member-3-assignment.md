@@ -1,8 +1,8 @@
-# Member 3 Assignment — Semantic Scholar, BibTeX và Reference Deduplication
+# Member 3 — Nguyễn Đức Quang — Semantic Scholar, BibTeX và Reference Deduplication
 
 ## 1. Vai trò
 
-Làm việc duy nhất trên nhánh `member-3/references-bibtex`. Sở hữu Semantic Scholar client, raw reference retention, BibTeX conversion/reference deduplication và lineage. Không sửa downloader, schema/export hoặc report để che lỗi dữ liệu.
+**Nguyễn Đức Quang** đảm nhận Member 3 và **chỉ làm việc trên nhánh** `member-3/references-bibtex`. Sở hữu Semantic Scholar client, raw reference retention, BibTeX conversion/reference deduplication và lineage. Không sửa downloader, schema/export hoặc report để che lỗi dữ liệu.
 
 ## 2. Requirement chịu trách nhiệm
 
