@@ -1,8 +1,8 @@
-# Member 1 Assignment — Discovery, Versioning, Orchestration và Integration
+# Member 1 — Ngô Gia An — Discovery, Versioning, Orchestration và Integration
 
 ## 1. Vai trò
 
-Member 1 là technical integrator nhưng **chỉ code trên nhánh** `member-1/discovery-orchestration`. Không sửa, push hoặc rebase nhánh thành viên khác. Việc tích hợp được thực hiện bằng review/merge PR đã đạt gate vào `main`.
+**Ngô Gia An** đảm nhận Member 1 và vai trò technical integrator, nhưng **chỉ code trên nhánh** `member-1/discovery-orchestration`. Không sửa, push hoặc rebase nhánh thành viên khác. Việc tích hợp được thực hiện bằng review/merge PR đã đạt gate vào `main`.
 
 Phạm vi chính: nhận assigned IDs, chuẩn hóa/validate, gọi arXiv API để lấy metadata và latest version, enumerate mọi version, cung cấp CLI/orchestrator end-to-end, README và integration gates.
 
