@@ -50,7 +50,7 @@ Không yêu cầu người dùng gửi mật khẩu, GitHub token, API key hoặ
 
 | Vai trò | Họ tên | GitHub | Trạng thái |
 |---|---|---|---|
-| Member 1 | **Ngô Gia An** | Chưa cung cấp | Đã xác nhận — technical integrator, discovery/versioning/orchestration |
+| Member 1 | **Ngô Gia An** | `bingsu1103` | Đã xác nhận — technical integrator, discovery/versioning/orchestration |
 | Member 2 | Chưa cung cấp | Chưa cung cấp | Chờ cập nhật |
 | Member 3 | **Nguyễn Đức Quang** | `ducquang2` | Đã xác nhận — Semantic Scholar, BibTeX conversion/reference dedup |
 | Member 4 | Chưa cung cấp | Chưa cung cấp | Chờ cập nhật |
