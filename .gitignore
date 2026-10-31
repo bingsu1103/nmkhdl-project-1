@@ -34,3 +34,6 @@ member-exports/
 .DS_Store
 .idea/
 .vscode/
+
+# Personal execution guides
+plans/member-1-execution-guide.md

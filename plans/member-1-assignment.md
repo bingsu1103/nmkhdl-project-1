@@ -1,7 +1,5 @@
 # Member 1 — Ngô Gia An — Discovery, Versioning, Orchestration và Integration
 
-> Hướng dẫn thao tác từng bước: [`member-1-execution-guide.md`](member-1-execution-guide.md)
-
 ## 1. Vai trò
 
 **Ngô Gia An** đảm nhận Member 1 và vai trò technical integrator, nhưng **chỉ code trên nhánh** `member-1/discovery-orchestration`. Không sửa, push hoặc rebase nhánh thành viên khác. Việc tích hợp được thực hiện bằng review/merge PR đã đạt gate vào `main`.
