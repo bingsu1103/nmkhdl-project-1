@@ -1,0 +1,3 @@
+# Phase 1 scaffold uses only the Python standard library.
+# Network, Parquet, metrics, parsing, and modeling dependencies will be added
+# only with the PR that introduces and verifies each corresponding component.
