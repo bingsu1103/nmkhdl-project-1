@@ -1,0 +1,20 @@
+[
+  {
+    "arxiv_id": "2509.16047",
+    "latest_versioned_id": "2509.16047v2",
+    "title": "Synthetic single-paper fixture A",
+    "authors": ["Example Author A", "Example Author B"],
+    "submission_date": "2025-09-01",
+    "revised_dates": ["2025-09-10"],
+    "venue": null
+  },
+  {
+    "arxiv_id": "2509.16048",
+    "latest_versioned_id": "2509.16048v1",
+    "title": "Synthetic single-paper fixture B",
+    "authors": ["Example Author C"],
+    "submission_date": "2025-09-02",
+    "revised_dates": [],
+    "venue": null
+  }
+]
