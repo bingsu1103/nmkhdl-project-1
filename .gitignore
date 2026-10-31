@@ -37,3 +37,6 @@ member-exports/
 
 # Personal execution guides
 plans/member-1-execution-guide.md
+
+# Local project inputs (ranges and credentials stay outside Git)
+local/
