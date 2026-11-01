@@ -1,4 +1,4 @@
-# Member 2 Assignment — Source Download, Safe Extraction và Hierarchy Parsing
+# Member 2 — Lày Khánh An — Source Download, Safe Extraction và Hierarchy Parsing
 
 ## 1. Vai trò
 
