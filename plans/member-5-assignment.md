@@ -1,8 +1,8 @@
-# Member 5 Assignment — Jupyter Book, Analysis, Citations và Submission QA
+# Member 5 Phạm Phúc An Khang — Jupyter Book, Analysis, Citations và Submission QA
 
 ## 1. Vai trò
 
-Làm việc duy nhất trên nhánh `member-5/book-poster`. Sở hữu `book/` trong code repo, repository deploy Pages, analysis và poster. Nếu cần thay đổi pipeline, phải mở issue cho đúng owner; không chỉnh dữ liệu để làm narrative đẹp hơn.
+**Phạm Phúc An Khang** làm việc duy nhất trên nhánh `member-5/book-poster`. Sở hữu `book/` trong code repo, repository deploy Pages, analysis và poster. Nếu cần thay đổi pipeline, phải mở issue cho đúng owner; không chỉnh dữ liệu để làm narrative đẹp hơn.
 
 Sở hữu Jupyter Book Milestone 1, CI/GitHub Pages, analysis notebooks, bibliography, mapping report-to-evidence và final link QA.
 
