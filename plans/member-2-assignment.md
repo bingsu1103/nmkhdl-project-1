@@ -2,7 +2,7 @@
 
 ## 1. Vai trò
 
-Làm việc duy nhất trên nhánh `member-2/source-parsing`. Sở hữu luồng tải source từng version, trích xuất chỉ `.tex`/`.bib`, compilation graph và hierarchy parser. Không chỉnh nhánh/file của người khác ngoài quy trình issue + owner change.
+Lày Khánh An đảm nhận làm việc trên nhánh `member-2/source-parsing`. Sở hữu luồng tải source từng version, trích xuất chỉ `.tex`/`.bib`, compilation graph và hierarchy parser. Không chỉnh nhánh/file của người khác ngoài quy trình issue + owner change.
 
 ## 2. Requirement chịu trách nhiệm
 
