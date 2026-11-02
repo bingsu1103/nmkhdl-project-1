@@ -10,6 +10,9 @@ import pyarrow as pa
 import pytest
 
 from src.storage import (
+    BIBTEX_SCHEMA,
+    ELEMENTS_SCHEMA,
+    HIERARCHY_SCHEMA,
     PAPERS_SCHEMA,
     REFERENCES_SCHEMA,
     create_table_from_records,
@@ -24,11 +27,14 @@ from src.normalize import (
     normalize_and_deduplicate_references,
 )
 from src.validate import (
-    validate_papers_table,
-    validate_references_table,
-    reconcile_crawling_counts,
     compute_crawl_statistics,
     load_manifest_assigned_ids,
+    reconcile_crawling_counts,
+    validate_bibtex_table,
+    validate_elements_table,
+    validate_hierarchy_table,
+    validate_papers_table,
+    validate_references_table,
 )
 
 
@@ -513,6 +519,219 @@ def test_validation_fails_on_unexpected_columns():
     report_refs = validate_references_table(table_refs)
     assert not report_refs.is_valid
     assert any("cột thừa không thuộc schema 'references'" in err for err in report_refs.errors)
+
+
+def test_elements_validation_and_deduplication():
+    """Kiểm tra validate_elements_table: kiểm tra schema, deduplication và kind taxonomy."""
+    # 1. Bảng hợp lệ (tuân thủ deduplication: câu s1 dùng chung cho cả 2 version)
+    records = [
+        {"element_id": "2310-12345#root1", "arxiv_id": "2310.12345", "kind": "document", "content": "Version 1 root"},
+        {"element_id": "2310-12345#root2", "arxiv_id": "2310.12345", "kind": "document", "content": "Version 2 root"},
+        {"element_id": "2310-12345#h1", "arxiv_id": "2310.12345", "kind": "heading", "content": "Introduction"},
+        {"element_id": "2310-12345#h2", "arxiv_id": "2310.12345", "kind": "heading", "content": "Background and model"},
+        {"element_id": "2310-12345#s1", "arxiv_id": "2310.12345", "kind": "sentence", "content": "We study the citation matching problem"},
+    ]
+    table = create_table_from_records(records, ELEMENTS_SCHEMA)
+    report = validate_elements_table(table)
+    assert report.is_valid, f"Validation lỗi: {report.errors}"
+    assert report.stats["unique_elements"] == 5
+    assert report.stats["kind_counts"]["document"] == 2
+    assert report.stats["kind_counts"]["heading"] == 2
+    assert report.stats["kind_counts"]["sentence"] == 1
+
+    # Roundtrip Parquet sharding
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        shards = write_sharded_parquet(table, tmp_dir, "elements", max_rows_per_shard=2)
+        assert len(shards) == 3
+        loaded = read_sharded_parquet(Path(tmp_dir) / "elements", ELEMENTS_SCHEMA)
+        assert loaded.num_rows == 5
+
+    # 2. Kiểm tra vi phạm deduplication: 2 element khác ID nhưng trùng (arxiv_id, kind, content)
+    records_duplicate_content = list(records) + [
+        {"element_id": "2310-12345#s2", "arxiv_id": "2310.12345", "kind": "sentence", "content": "We study the citation matching problem"}
+    ]
+    table_dup = create_table_from_records(records_duplicate_content, ELEMENTS_SCHEMA)
+    report_dup = validate_elements_table(table_dup)
+    assert not report_dup.is_valid
+    assert any("khử trùng lặp" in err.lower() or "deduplication" in err.lower() for err in report_dup.errors)
+
+    # 3. Kiểm tra kind không hợp lệ
+    records_invalid_kind = [
+        {"element_id": "2310-12345#x1", "arxiv_id": "2310.12345", "kind": "invalid_kind_123", "content": "Content"}
+    ]
+    table_bad_kind = create_table_from_records(records_invalid_kind, ELEMENTS_SCHEMA)
+    report_bad_kind = validate_elements_table(table_bad_kind)
+    assert not report_bad_kind.is_valid
+    assert any("không hợp lệ" in err.lower() for err in report_bad_kind.errors)
+
+
+def test_hierarchy_validation_tree_integrity():
+    """Kiểm tra validate_hierarchy_table: cây phân cấp hợp lệ, phát hiện chu trình, nhiều root, self-parent."""
+    # Chuẩn bị elements table chuẩn cho 2 version
+    elements_records = [
+        {"element_id": "2310-12345#root1", "arxiv_id": "2310.12345", "kind": "document", "content": "Version 1 root"},
+        {"element_id": "2310-12345#root2", "arxiv_id": "2310.12345", "kind": "document", "content": "Version 2 root"},
+        {"element_id": "2310-12345#h1", "arxiv_id": "2310.12345", "kind": "heading", "content": "Introduction"},
+        {"element_id": "2310-12345#h2", "arxiv_id": "2310.12345", "kind": "heading", "content": "Background and model"},
+        {"element_id": "2310-12345#s1", "arxiv_id": "2310.12345", "kind": "sentence", "content": "We study the citation matching problem"},
+    ]
+    elements_table = create_table_from_records(elements_records, ELEMENTS_SCHEMA)
+
+    # 1. Cây hợp lệ cho cả v1 và v2 (s1 xuất hiện ở cả 2 version với cha khác nhau)
+    hierarchy_records = [
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "2310-12345#h1", "parent_id": "2310-12345#root1"},
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "2310-12345#s1", "parent_id": "2310-12345#h1"},
+        {"arxiv_id": "2310.12345", "version": 2, "element_id": "2310-12345#h2", "parent_id": "2310-12345#root2"},
+        {"arxiv_id": "2310.12345", "version": 2, "element_id": "2310-12345#s1", "parent_id": "2310-12345#h2"},
+    ]
+    hierarchy_table = create_table_from_records(hierarchy_records, HIERARCHY_SCHEMA)
+    report = validate_hierarchy_table(hierarchy_table, elements_table=elements_table)
+    assert report.is_valid, f"Validation thất bại: {report.errors}"
+    assert report.stats["unique_trees"] == 2
+    assert report.stats["total_edges"] == 4
+
+    # 2. Bắt lỗi cạnh tự trỏ chính mình
+    bad_self_parent = [
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "2310-12345#s1", "parent_id": "2310-12345#s1"}
+    ]
+    rep_self = validate_hierarchy_table(create_table_from_records(bad_self_parent, HIERARCHY_SCHEMA))
+    assert not rep_self.is_valid
+    assert any("tự trỏ" in err.lower() for err in rep_self.errors)
+
+    # 3. Bắt lỗi một nút con có nhiều cha trong cùng 1 version
+    bad_multi_parents = [
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "2310-12345#h1", "parent_id": "2310-12345#root1"},
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "2310-12345#s1", "parent_id": "2310-12345#h1"},
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "2310-12345#s1", "parent_id": "2310-12345#root1"},
+    ]
+    rep_multi = validate_hierarchy_table(create_table_from_records(bad_multi_parents, HIERARCHY_SCHEMA))
+    assert not rep_multi.is_valid
+    assert any("nhiều cha khác nhau" in err.lower() for err in rep_multi.errors)
+
+    # 4. Bắt lỗi có nhiều hơn 1 Document Root trong cùng 1 version
+    bad_multi_roots = [
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "2310-12345#h1", "parent_id": "2310-12345#root1"},
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "2310-12345#h2", "parent_id": "2310-12345#root2"},
+    ]
+    rep_roots = validate_hierarchy_table(create_table_from_records(bad_multi_roots, HIERARCHY_SCHEMA))
+    assert not rep_roots.is_valid
+    assert any("nút root" in err.lower() for err in rep_roots.errors)
+
+    # 5. Bắt lỗi chu trình (cycle detection)
+    bad_cycle = [
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "node_a", "parent_id": "node_b"},
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "node_b", "parent_id": "node_c"},
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "node_c", "parent_id": "node_a"},
+    ]
+    rep_cycle = validate_hierarchy_table(create_table_from_records(bad_cycle, HIERARCHY_SCHEMA))
+    assert not rep_cycle.is_valid
+    assert any("chu trình" in err.lower() or "root" in err.lower() for err in rep_cycle.errors)
+
+    # 6. Bắt lỗi khóa ngoại sang elements_table (nút không có trong elements)
+    bad_fk = [
+        {"arxiv_id": "2310.12345", "version": 1, "element_id": "ghost_node", "parent_id": "2310-12345#root1"}
+    ]
+    rep_fk = validate_hierarchy_table(
+        create_table_from_records(bad_fk, HIERARCHY_SCHEMA),
+        elements_table=elements_table
+    )
+    assert not rep_fk.is_valid
+    assert any("khóa ngoại" in err.lower() or "không tồn tại trong 'elements'" in err.lower() for err in rep_fk.errors)
+
+
+def test_bibtex_validation():
+    """Kiểm tra validate_bibtex_table: schema, primary key uniqueness, year bounds, entry types."""
+    # 1. Bảng hợp lệ
+    bib_records = [
+        {
+            "arxiv_id": "2310.12345",
+            "citation_key": "vaswani2017",
+            "entry_type": "article",
+            "title": "Attention Is All You Need",
+            "authors": ["Ashish Vaswani", "Noam Shazeer"],
+            "year": 2017,
+            "doi": "10.1000/182",
+            "journal": "NeurIPS",
+            "url": "https://arxiv.org/abs/1706.03762",
+        },
+        {
+            "arxiv_id": "2310.12345",
+            "citation_key": "devlin2018bert",
+            "entry_type": "inproceedings",
+            "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+            "authors": ["Jacob Devlin"],
+            "year": 2018,
+            "doi": None,
+            "journal": "NAACL",
+            "url": None,
+        },
+    ]
+    table = create_table_from_records(bib_records, BIBTEX_SCHEMA)
+    report = validate_bibtex_table(table)
+    assert report.is_valid, f"Validation thất bại: {report.errors}"
+    assert report.stats["unique_entries"] == 2
+    assert report.stats["entries_with_year"] == 2
+
+    # Roundtrip Parquet
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        write_sharded_parquet(table, tmp_dir, "bibtex")
+        loaded = read_sharded_parquet(Path(tmp_dir) / "bibtex", BIBTEX_SCHEMA)
+        assert loaded.num_rows == 2
+
+    # 2. Bắt lỗi trùng khóa citation_key trong cùng bài báo
+    dup_records = list(bib_records) + [
+        {
+            "arxiv_id": "2310.12345",
+            "citation_key": "vaswani2017",  # Trùng lặp
+            "entry_type": "article",
+            "title": "Attention Is All You Need (Dup)",
+            "authors": ["A. Vaswani"],
+            "year": 2017,
+            "doi": None,
+            "journal": None,
+            "url": None,
+        }
+    ]
+    rep_dup = validate_bibtex_table(create_table_from_records(dup_records, BIBTEX_SCHEMA))
+    assert not rep_dup.is_valid
+    assert any("trùng lặp" in err.lower() for err in rep_dup.errors)
+
+    # 3. Bắt lỗi năm không hợp lệ
+    bad_year_records = [
+        {
+            "arxiv_id": "2310.12345",
+            "citation_key": "ancient_cite",
+            "entry_type": "book",
+            "title": "Old Book",
+            "authors": ["Author"],
+            "year": 1200,  # Năm quá cũ (< 1800)
+            "doi": None,
+            "journal": None,
+            "url": None,
+        }
+    ]
+    rep_year = validate_bibtex_table(create_table_from_records(bad_year_records, BIBTEX_SCHEMA))
+    assert not rep_year.is_valid
+    assert any("year" in err.lower() for err in rep_year.errors)
+
+    # 4. Bắt lỗi tiêu đề rỗng
+    empty_title_records = [
+        {
+            "arxiv_id": "2310.12345",
+            "citation_key": "no_title",
+            "entry_type": "misc",
+            "title": "",  # Lỗi tiêu đề rỗng
+            "authors": ["Author"],
+            "year": 2020,
+            "doi": None,
+            "journal": None,
+            "url": None,
+        }
+    ]
+    rep_title = validate_bibtex_table(create_table_from_records(empty_title_records, BIBTEX_SCHEMA))
+    assert not rep_title.is_valid
+    assert any("title" in err.lower() for err in rep_title.errors)
+
 
 
 

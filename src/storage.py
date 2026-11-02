@@ -5,6 +5,7 @@ Thuộc sở hữu của Member 4 - Data Quality, Schema và Storage Owner.
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import tempfile
@@ -121,6 +122,23 @@ def create_table_from_records(records: List[Dict[str, Any]], schema: pa.Schema) 
                     val = [str(x) for x in val]
             elif val is None and not field.nullable:
                 raise ValueError(f"Trường non-nullable '{col_name}' bị null trong record: {record}")
+            elif (field.type == pa.string() or isinstance(field.type, pa.DictionaryType)) and val is not None:
+                val = str(val)
+            elif field.type in (pa.int32(), pa.int64()) and val is not None:
+                try:
+                    f_val = float(val)
+                    if math.isnan(f_val):
+                        if field.nullable:
+                            val = None
+                        else:
+                            raise ValueError(f"Trường non-nullable '{col_name}' bị NaN trong record: {record}")
+                    else:
+                        val = int(round(f_val))
+                except (ValueError, TypeError):
+                    if field.nullable:
+                        val = None
+                    else:
+                        raise ValueError(f"Trường non-nullable '{col_name}' không thể chuyển thành int: {val}")
             data_by_col[col_name].append(val)
 
     arrays = []
