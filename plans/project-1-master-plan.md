@@ -54,7 +54,7 @@ Không yêu cầu người dùng gửi mật khẩu, GitHub token, API key hoặ
 | Member 2 | **Lày Khánh An** |  `laykhanhan01062005-star` | Đã xác nhận — Source Download, Safe Extraction và Hierarchy Parsing |
 | Member 3 | **Nguyễn Đức Quang** | `ducquang2` | Đã xác nhận — Semantic Scholar, BibTeX conversion/reference dedup |
 | Member 4 | Chưa cung cấp | Chưa cung cấp | Chờ cập nhật |
-| Member 5 | Chưa cung cấp | Chưa cung cấp | Chờ cập nhật |
+| Member 5 | Phạm Phúc An Khang | PPAKhang| Đã xác nhận — Jupyter Book, Analysis, Citations, Poster và Submission QA |
 
 ### 1.4. Format cần gửi — không cần liệt kê từng arXiv ID
 
@@ -379,7 +379,7 @@ Các owner phải thống nhất contract này trước khi code song song:
 | M2 | Source download/extraction + compilation graph + hierarchy parser | `downloader.py`, `extractor.py`, `latex_graph.py`, `hierarchy_parser.py` | Schema/export/model/report prose |
 | M3 — Nguyễn Đức Quang | Semantic Scholar + BibTeX conversion/reference dedup | `s2_client.py`, `bibtex.py`, reference lineage/dedup tests | Downloader/model/report figures |
 | M4 | Storage/schema/validation/metrics + labeling/model/evaluation | `storage.py`, `normalize.py`, `validate.py`, `metrics.py`, `label.py`, `features.py`, `model.py`, `evaluate.py` | API client internals/report prose |
-| M5 | M1/M2 Jupyter Book + analysis + poster + deployment/submission QA | `book/`, report deploy repo, analysis notebooks, poster source | Sửa số liệu nguồn hoặc pipeline để khớp narrative |
+| M5 — Phạm Phúc An Khang | M1/M2 Jupyter Book + analysis + poster + deployment/submission QA | `book/`, report deploy repo, analysis notebooks, poster source | Sửa số liệu nguồn hoặc pipeline để khớp narrative |
 
 Chi tiết từng người nằm trong `member-1-assignment.md` đến `member-5-assignment.md`.
 
