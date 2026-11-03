@@ -393,3 +393,40 @@ def summarize_s2_crawl(statuses: List[Dict[str, Any]], raw_records: List[Dict[st
             "value": round(succeeded / max(1, attempted), 4),
         },
     }
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    """
+    Chạy S2 crawl độc lập (khi chưa có pipeline của M1), vd:
+        python -m src.s2_client --ids 1810.04805 1706.03762 --out data/s2_raw
+        python -m src.s2_client --ids-file data/expanded_ids.txt --out data/s2_raw
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Crawl Semantic Scholar references cho danh sách arXiv ID.")
+    parser.add_argument("--ids", nargs="*", default=[], help="Các arXiv ID cách nhau bởi dấu cách")
+    parser.add_argument("--ids-file", type=Path, help="File chứa mỗi dòng một arXiv ID")
+    parser.add_argument("--out", type=Path, default=Path("data/s2_raw"), help="Thư mục lưu raw JSON")
+    parser.add_argument("--max-retries", type=int, default=4)
+    args = parser.parse_args(argv)
+
+    ids = list(args.ids)
+    if args.ids_file:
+        ids += [line.strip() for line in args.ids_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not ids:
+        parser.error("cần --ids hoặc --ids-file")
+
+    statuses = crawl_references(ids, args.out, max_retries=args.max_retries)
+    for s in statuses:
+        print(f"{s['arxiv_id']}\t{s['status']}\traw={s['raw_reference_count']}\teligible={s['eligible_reference_count']}")
+    # Chỉ tổng hợp các paper của lần chạy này, không lẫn file cũ khác trong out
+    raw_records: List[Dict[str, Any]] = []
+    for s in statuses:
+        data = _load_json(_cache_path(args.out, s["arxiv_id"])) or {}
+        raw_records.extend(data.get("references", []))
+    summary = summarize_s2_crawl(statuses, raw_records)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()
