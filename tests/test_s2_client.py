@@ -372,3 +372,35 @@ def test_summary_counts_and_denominators(tmp_path):
     assert summary["avg_all_references_per_paper"] == 6.0
     assert summary["avg_eligible_arxiv_references_per_paper"] == 2.0
     assert summary["reference_metadata_success_rate"] == {"numerator": 1, "denominator": 3, "value": 0.3333}
+
+
+# ---------- CLI ----------
+
+def test_cli_crawls_ids_file_and_prints_summary(tmp_path, monkeypatch, capsys):
+    import src.s2_client as s2
+
+    ids_file = tmp_path / "ids.txt"
+    ids_file.write_text("2310.00001\n\n2310.00002v2\n", encoding="utf-8")
+    out = tmp_path / "raw"
+    # File cũ của paper khác trong out không được tính vào summary lần này
+    out.mkdir()
+    (out / "9999.99999.json").write_text(json.dumps({"status": {}, "references": [{"x": 1}]}), encoding="utf-8")
+
+    session = FakeSession([ok_payload(SAMPLE_REFS), FakeResponse(404)])
+    monkeypatch.setattr(s2.requests, "Session", lambda: session)
+    monkeypatch.setattr(s2, "RateLimiter", fast_limiter)
+
+    s2.main(["--ids-file", str(ids_file), "--out", str(out)])
+    printed = capsys.readouterr().out
+    assert "2310.00001\tok\traw=4\teligible=2" in printed
+    assert "2310.00002\tnot_found" in printed
+    summary = json.loads(printed[printed.index("{"):])
+    assert summary["s2_citing_papers_attempted"] == 2
+    assert summary["raw_references_total"] == 4
+
+
+def test_cli_requires_ids(tmp_path):
+    import src.s2_client as s2
+
+    with pytest.raises(SystemExit):
+        s2.main(["--out", str(tmp_path)])
