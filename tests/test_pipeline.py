@@ -101,6 +101,31 @@ class DiscoveryPipelineTests(unittest.TestCase):
             )
             self.assertEqual(changed.calls, [metadata.arxiv_id])
 
+    def test_uses_batch_discovery_and_preserves_input_order(self) -> None:
+        first = self._metadata("2509.16047")
+
+        class BatchClient:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def discover(self, arxiv_id: str) -> PaperMetadata:
+                raise AssertionError("single discovery must not be used")
+
+            def discover_many(self, arxiv_ids):
+                self.calls.append(list(arxiv_ids))
+                return {first.arxiv_id: first}
+
+        client = BatchClient()
+        papers = [
+            OwnedPaper("member-1", first.arxiv_id),
+            OwnedPaper("member-1", "2509.99999"),
+        ]
+        result = DiscoveryPipeline(client).run(papers)
+
+        self.assertEqual(client.calls, [[first.arxiv_id, "2509.99999"]])
+        self.assertEqual(result.outcomes[0].status, StageStatus.SUCCESS)
+        self.assertEqual(result.outcomes[1].status, StageStatus.NO_SOURCE)
+
     @staticmethod
     def _metadata(arxiv_id: str) -> PaperMetadata:
         return PaperMetadata(

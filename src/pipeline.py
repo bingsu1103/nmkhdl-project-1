@@ -61,23 +61,41 @@ class DiscoveryPipeline:
         current_run_id = run_id or str(uuid4())
         outcomes: list[DiscoveryOutcome] = []
         events: list[StageEvent] = []
-
-        for paper in papers:
-            fingerprint = checkpoint_fingerprint(
+        fingerprints = {
+            paper.arxiv_id: checkpoint_fingerprint(
                 member_id=paper.member_id,
                 arxiv_id=paper.arxiv_id,
                 context=checkpoint_context,
             )
-            cached = None
-            if resume and self._checkpoint_store is not None:
+            for paper in papers
+        }
+        cached_by_id: dict[str, DiscoveryCheckpoint] = {}
+        if resume and self._checkpoint_store is not None:
+            for paper in papers:
                 cached = self._checkpoint_store.load(
                     paper.arxiv_id,
-                    fingerprint=fingerprint,
+                    fingerprint=fingerprints[paper.arxiv_id],
                 )
-            if cached is not None and cached.status in {
-                StageStatus.SUCCESS,
-                StageStatus.NO_SOURCE,
-            }:
+                if cached is not None and cached.status in {
+                    StageStatus.SUCCESS,
+                    StageStatus.NO_SOURCE,
+                }:
+                    cached_by_id[paper.arxiv_id] = cached
+
+        pending = [paper for paper in papers if paper.arxiv_id not in cached_by_id]
+        batch_records: dict[str, PaperMetadata] | None = None
+        batch_error: DiscoveryError | None = None
+        discover_many = getattr(self._client, "discover_many", None)
+        if pending and callable(discover_many):
+            try:
+                batch_records = dict(discover_many([paper.arxiv_id for paper in pending]))
+            except DiscoveryError as exc:
+                batch_error = exc
+
+        for paper in papers:
+            fingerprint = fingerprints[paper.arxiv_id]
+            cached = cached_by_id.get(paper.arxiv_id)
+            if cached is not None:
                 outcomes.append(
                     DiscoveryOutcome(
                         paper=paper,
@@ -108,7 +126,17 @@ class DiscoveryPipeline:
                 )
             )
             try:
-                metadata = self._client.discover(paper.arxiv_id)
+                if batch_error is not None:
+                    raise batch_error
+                if batch_records is not None:
+                    try:
+                        metadata = batch_records[paper.arxiv_id]
+                    except KeyError as exc:
+                        raise PaperNotFoundError(
+                            f"arXiv paper not found: {paper.arxiv_id}"
+                        ) from exc
+                else:
+                    metadata = self._client.discover(paper.arxiv_id)
                 tasks = tuple(resolve_version_tasks(metadata, member_id=paper.member_id))
             except (DiscoveryError, VersionResolutionError) as exc:
                 if isinstance(exc, PaperNotFoundError):
