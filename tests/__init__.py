@@ -1,3 +1,1 @@
-"""
-Tests package for arXiv Project
-"""
+"""Test package for the arXiv pipeline."""

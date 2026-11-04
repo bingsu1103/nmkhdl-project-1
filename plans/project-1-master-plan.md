@@ -35,12 +35,12 @@ Vì thế mọi quyết định ở M1 phải bảo toàn dữ liệu cần cho 
 
 | Mức độ | Đầu vào còn thiếu | Vì sao cần | Có thể làm gì trước khi có |
 |---|---|---|---|
-| **BLOCKER** | Năm dòng giá trị `start_month`, `start_id`, `end_month`, `end_id`, một dòng cho mỗi thành viên | Bốn trường mã hóa arXiv range cá nhân; union năm range là corpus nhóm sau khi xác nhận quy ước biên | Viết pipeline, fixture và test với ID mẫu; không công bố kết quả thật |
-| **BLOCKER trước khi nộp** | Ngày/giờ deadline, múi giờ và link Moodle | Chốt lịch freeze, review, submit; đề bài chỉ nói không nhận trễ | Làm theo lịch tương đối T-14, T-7, T-3, T-1 |
+| **BLOCKER cho full-group run** | Mới có range Member 1; vẫn cần bốn dòng `start_month`, `start_id`, `end_month`, `end_id` của Member 2–5 | Union năm range là corpus nhóm | Có thể chạy Member 1; chưa công bố coverage toàn nhóm |
+| **Đã xác nhận** | Deadline theo giờ Việt Nam (`Asia/Ho_Chi_Minh`): Jupyter Book **06/11/2026 23:59**, GitHub Repository **14/11/2026 23:59**, Hugging Face **20/11/2026 23:59**, Poster **27/11/2026 23:59** | Chốt lịch freeze, review và submit | Dùng lịch cụ thể ở mục 18 |
 | **BLOCKER trước khi viết report** | Ngôn ngữ chính thức của chương trình | Đề bài yêu cầu mọi submission dùng official language | Viết mã/comment tiếng Anh; giữ report ở trạng thái dàn ý đến khi xác nhận |
-| **Cần xác nhận một phần** | Member 1 là **Ngô Gia An**, Member 3 là **Nguyễn Đức Quang**; vẫn cần tên/ID sinh viên và GitHub username của Member 2, 4, 5 | Gán owner, reviewer và ghi đóng góp trung thực | Giữ nhãn Member 2, 4, 5 tạm thời đến khi có thông tin |
-| **Cần xác nhận** | Tên group, tên hai public repository và GitHub organization/account | Cần tạo URL nộp cho code repo và Jupyter Book repo | Dùng tên đề xuất trong mục 4 |
-| **Cần xác nhận** | Quy ước chính xác để expand range: tháng dạng `YYMM`, `start_id/end_id` có zero-padding bao nhiêu chữ số và hai đầu có inclusive không | Ảnh chỉ cho thấy header, chưa có ví dụ giá trị; không nên tự suy đoán ID | Chuẩn bị validator và chờ một dòng range thật để xác minh |
+| **Cần xác nhận một phần** | Đã có tên/GitHub Member 1–5; vẫn cần MSSV Member 2–5 | Gán đóng góp và submission metadata chính xác | Không tự suy đoán MSSV |
+| **Cần xác nhận một phần** | ID nhóm **18** và code repo `bingsu1103/nmkhdl-project-1` đã xác nhận; vẫn cần tạo/chốt Jupyter Book repo | Cần URL ổn định để nộp Jupyter Book | Không đổi Pages URL sau khi nộp |
+| **Đã xác nhận cho Member 1** | Range dùng `YYYY-MM`, ID 5 chữ số và tính cả `end_id` | Member 1 có 5.000 candidate IDs từ `2509.16047` đến `2509.21046` | Lưu convention inclusive trong manifest |
 | **Cần xác nhận** | Hướng dẫn bổ sung từ Lab Instructors về Hugging Face/Colab và naming dataset cá nhân | Moodle yêu cầu mỗi thành viên upload phần dữ liệu của mình | Thiết kế export Parquet tương thích; chưa publish |
 | Tùy chọn | Semantic Scholar API key | Không bắt buộc, nhưng ổn định hơn pool anonymous | Hỗ trợ cả có/không key qua biến môi trường |
 
@@ -50,11 +50,11 @@ Không yêu cầu người dùng gửi mật khẩu, GitHub token, API key hoặ
 
 | Vai trò | Họ tên | GitHub | Trạng thái |
 |---|---|---|---|
-| Member 1 | **Ngô Gia An** | `bingsu1103` | Đã xác nhận — technical integrator, discovery/versioning/orchestration |
+| Member 1 | **Ngô Gia An — MSSV 23120205** | `bingsu1103` | Đã xác nhận — nhóm 18; technical integrator, discovery/versioning/orchestration |
 | Member 2 | **Lày Khánh An** |  `laykhanhan01062005-star` | Đã xác nhận — Source Download, Safe Extraction và Hierarchy Parsing |
 | Member 3 | **Nguyễn Đức Quang** | `ducquang2` | Đã xác nhận — Semantic Scholar, BibTeX conversion/reference dedup |
-| Member 4 | Chưa cung cấp | Chưa cung cấp | Chờ cập nhật |
-| Member 5 | Phạm Phúc An Khang | PPAKhang| Đã xác nhận — Jupyter Book, Analysis, Citations, Poster và Submission QA |
+| Member 4 | **Từ Quốc Nghĩa** | `tuquocnghia` | Đã xác nhận — data quality, metrics, matching model/evaluation |
+| Member 5 | **Phạm Phúc An Khang** | `PPAKhang` | Đã xác nhận — Jupyter Book, Analysis, Citations, Poster và Submission QA |
 
 ### 1.4. Format cần gửi — không cần liệt kê từng arXiv ID
 
@@ -70,6 +70,21 @@ member-5,YYMM,NNNNN,YYMM,NNNNN
 ```
 
 Range manifest phải lưu `member_id` và bốn giá trị gốc, checksum, thời điểm import và danh sách ID đã expand. Cách zero-pad, xử lý range đi qua nhiều tháng và việc hai đầu có được tính hay không phải theo ví dụ/quy ước Lab xác nhận; không tự suy đoán từ tên cột.
+
+Range đã nhận cho Member 1:
+
+```text
+member_id:   member-1
+student_id:  23120205
+student:     Ngô Gia An
+group_id:    18
+start_month: 2025-09
+start_id:    16047
+end_month:   2025-09
+end_id:      21046
+```
+
+Range Member 1 tính cả hai đầu, nên expand thành đúng 5.000 candidate IDs. File input thật được giữ local và không commit vào code repository.
 
 ## 2. Requirement traceability — điều kiện đạt điểm tối đa
 
@@ -636,17 +651,18 @@ Mỗi dataset cá nhân có dataset card root và `data/<table>/*.parquet`. Khô
 | Hugging Face Dataset | Từng thành viên | Một public dataset riêng cho range cá nhân, sáu Parquet tables | Final M3 |
 | Poster | Đại diện nhóm | `<group_id>.pptx`, một trang portrait A2 | Final review/session |
 
-## 18. Lịch tổng thể tương đối
+## 18. Lịch tổng thể theo deadline đã xác nhận
 
-Do chưa có deadline cụ thể, dùng ba checkpoint `D1` (Book M1), `D2` (Book M2) và `DF` (HF/Repo/Poster cuối):
+Tất cả thời gian dưới đây theo `Asia/Ho_Chi_Minh`:
 
-- Trước D1: hoàn tất G0–G7 của M1; submit Book/Repo URLs sớm và giữ URL cố định.
-- D1 đến D2: hoàn tất M2-P0..P6; append section vào cùng Book; rerun M1 fixes nếu cần.
-- Sau D2 đến DF-14: label protocol/pools, feature/model iterations.
-- DF-14 đến DF-7: freeze split/model, final test evaluation, personal dataset exports.
-- DF-6 đến DF-3: poster, independent reproduction, HF public/access/schema QA.
-- DF-2: code/content freeze, rehearsal và cross-member dataset audit.
-- DF-1: đại diện/từng thành viên nộp đúng cổng; không chờ sát giờ.
+| Deliverable | Deadline Moodle | Internal freeze đề xuất |
+|---|---:|---:|
+| Jupyter Book M1 + M2 | 06/11/2026 23:59 | 05/11/2026 18:00; nộp URL trước 06/11 18:00 |
+| GitHub Repository | 14/11/2026 23:59 | 13/11/2026 18:00; final reproducibility audit sáng 14/11 |
+| Personal Hugging Face Dataset | 20/11/2026 23:59 | 19/11/2026 18:00; cả năm links incognito pass |
+| Poster `<group_id>.pptx` | 27/11/2026 23:59 | content freeze 24/11; print-layout/rehearsal 25–26/11 |
+
+Lưu ý: mục Jupyter Book là checkpoint tiến độ và URL phải ổn định. Nội dung vẫn có thể cập nhật trước hạn Poster theo thông báo Moodle, nhưng nhóm nên có M1+M2 tối thiểu build được trước 06/11.
 
 ## 19. Checklist cuối toàn đồ án
 
