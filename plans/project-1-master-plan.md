@@ -35,12 +35,12 @@ Vì thế mọi quyết định ở M1 phải bảo toàn dữ liệu cần cho 
 
 | Mức độ | Đầu vào còn thiếu | Vì sao cần | Có thể làm gì trước khi có |
 |---|---|---|---|
-| **BLOCKER** | Năm dòng giá trị `start_month`, `start_id`, `end_month`, `end_id`, một dòng cho mỗi thành viên | Bốn trường mã hóa arXiv range cá nhân; union năm range là corpus nhóm sau khi xác nhận quy ước biên | Viết pipeline, fixture và test với ID mẫu; không công bố kết quả thật |
+| **BLOCKER cho full-group run** | Mới có range Member 1; vẫn cần bốn dòng `start_month`, `start_id`, `end_month`, `end_id` của Member 2–5 | Union năm range là corpus nhóm | Có thể chạy Member 1; chưa công bố coverage toàn nhóm |
 | **Đã xác nhận** | Deadline theo giờ Việt Nam (`Asia/Ho_Chi_Minh`): Jupyter Book **06/11/2026 23:59**, GitHub Repository **14/11/2026 23:59**, Hugging Face **20/11/2026 23:59**, Poster **27/11/2026 23:59** | Chốt lịch freeze, review và submit | Dùng lịch cụ thể ở mục 18 |
 | **BLOCKER trước khi viết report** | Ngôn ngữ chính thức của chương trình | Đề bài yêu cầu mọi submission dùng official language | Viết mã/comment tiếng Anh; giữ report ở trạng thái dàn ý đến khi xác nhận |
-| **Cần xác nhận một phần** | Member 1 đã xác nhận là **Ngô Gia An**; vẫn cần tên/ID sinh viên và GitHub username của Member 2–5 | Gán owner, reviewer và ghi đóng góp trung thực | Giữ nhãn Member 2–5 tạm thời đến khi có thông tin |
+| **Cần xác nhận một phần** | Đã có tên/GitHub Member 1–5; vẫn cần MSSV Member 2–5 | Gán đóng góp và submission metadata chính xác | Không tự suy đoán MSSV |
 | **Cần xác nhận một phần** | ID nhóm **18** và code repo `bingsu1103/nmkhdl-project-1` đã xác nhận; vẫn cần tạo/chốt Jupyter Book repo | Cần URL ổn định để nộp Jupyter Book | Không đổi Pages URL sau khi nộp |
-| **Cần xác nhận** | Quy ước chính xác để expand range: tháng dạng `YYMM`, `start_id/end_id` có zero-padding bao nhiêu chữ số và hai đầu có inclusive không | Ảnh chỉ cho thấy header, chưa có ví dụ giá trị; không nên tự suy đoán ID | Chuẩn bị validator và chờ một dòng range thật để xác minh |
+| **Cần xác nhận cho Member 1** | Quy ước có tính `end_id` hay không | Quyết định Member 1 có 4.999 hay 5.000 candidate IDs | Chưa expand/chạy dữ liệu thật |
 | **Cần xác nhận** | Hướng dẫn bổ sung từ Lab Instructors về Hugging Face/Colab và naming dataset cá nhân | Moodle yêu cầu mỗi thành viên upload phần dữ liệu của mình | Thiết kế export Parquet tương thích; chưa publish |
 | Tùy chọn | Semantic Scholar API key | Không bắt buộc, nhưng ổn định hơn pool anonymous | Hỗ trợ cả có/không key qua biến môi trường |
 
@@ -48,13 +48,13 @@ Không yêu cầu người dùng gửi mật khẩu, GitHub token, API key hoặ
 
 ### 1.3. Danh sách thành viên
 
-| Vai trò | Họ tên | Trạng thái |
-|---|---|---|
-| Member 1 | **Ngô Gia An — MSSV 23120205 — GitHub bingsu1103** | Đã xác nhận — nhóm 18; technical integrator, discovery/versioning/orchestration |
-| Member 2 | Chưa cung cấp | Chờ cập nhật |
-| Member 3 | Chưa cung cấp | Chờ cập nhật |
-| Member 4 | Chưa cung cấp | Chờ cập nhật |
-| Member 5 | Chưa cung cấp | Chờ cập nhật |
+| Vai trò | Họ tên | GitHub | Trạng thái |
+|---|---|---|---|
+| Member 1 | **Ngô Gia An — MSSV 23120205** | `bingsu1103` | Đã xác nhận — nhóm 18; technical integrator, discovery/versioning/orchestration |
+| Member 2 | **Lày Khánh An** |  `laykhanhan01062005-star` | Đã xác nhận — Source Download, Safe Extraction và Hierarchy Parsing |
+| Member 3 | **Nguyễn Đức Quang** | `ducquang2` | Đã xác nhận — Semantic Scholar, BibTeX conversion/reference dedup |
+| Member 4 | **Từ Quốc Nghĩa** | `tuquocnghia` | Đã xác nhận — data quality, metrics, matching model/evaluation |
+| Member 5 | **Phạm Phúc An Khang** | `PPAKhang` | Đã xác nhận — Jupyter Book, Analysis, Citations, Poster và Submission QA |
 
 ### 1.4. Format cần gửi — không cần liệt kê từng arXiv ID
 
@@ -84,7 +84,7 @@ end_month:   2025-09
 end_id:      21046
 ```
 
-Hai đầu range có inclusive hay không vẫn cần xác nhận trước khi expand/chạy dữ liệu thật. File input thật được giữ local và không commit vào code repository.
+Quy ước có tính `end_id` hay không vẫn cần xác nhận trước khi expand/chạy dữ liệu thật. File input thật được giữ local và không commit vào code repository.
 
 ## 2. Requirement traceability — điều kiện đạt điểm tối đa
 
@@ -392,9 +392,9 @@ Các owner phải thống nhất contract này trước khi code song song:
 |---|---|---|---|
 | M1 — Ngô Gia An | Discovery, versioning, CLI, orchestration, integration | `ids.py`, `arxiv_client.py`, `version_resolver.py`, `cli.py`, `pipeline.py`, `README.md` | Downloader/extractor, S2 internals, report |
 | M2 | Source download/extraction + compilation graph + hierarchy parser | `downloader.py`, `extractor.py`, `latex_graph.py`, `hierarchy_parser.py` | Schema/export/model/report prose |
-| M3 | Semantic Scholar + BibTeX conversion/reference dedup | `s2_client.py`, `bibtex.py`, reference lineage/dedup tests | Downloader/model/report figures |
+| M3 — Nguyễn Đức Quang | Semantic Scholar + BibTeX conversion/reference dedup | `s2_client.py`, `bibtex.py`, reference lineage/dedup tests | Downloader/model/report figures |
 | M4 | Storage/schema/validation/metrics + labeling/model/evaluation | `storage.py`, `normalize.py`, `validate.py`, `metrics.py`, `label.py`, `features.py`, `model.py`, `evaluate.py` | API client internals/report prose |
-| M5 | M1/M2 Jupyter Book + analysis + poster + deployment/submission QA | `book/`, report deploy repo, analysis notebooks, poster source | Sửa số liệu nguồn hoặc pipeline để khớp narrative |
+| M5 — Phạm Phúc An Khang | M1/M2 Jupyter Book + analysis + poster + deployment/submission QA | `book/`, report deploy repo, analysis notebooks, poster source | Sửa số liệu nguồn hoặc pipeline để khớp narrative |
 
 Chi tiết từng người nằm trong `member-1-assignment.md` đến `member-5-assignment.md`.
 
@@ -690,7 +690,7 @@ Task ID dùng quy ước `MS<1|2|3>-M<1..5>-T<nn>`. Mỗi member file phải có
 |---|---:|---:|---:|---|
 | Member 1 — Ngô Gia An | 7 task: ranges/discovery/version/CLI/orchestration/repro/integration | 5 task: handoff/orchestration/integration/repro/release | 5 task: quota/split/orchestration/six-table/HF/release | Manual label >=5 publications, >=100 entries; personal six-table HF dataset |
 | Member 2 | 7 task: download/payload/safe extract/preservation/empty/metrics/pilot | 7 task: root/graph/tree/leaves/sentences/coverage/performance | 5 task: manual labels/hierarchy features/prediction QA/HF/poster | Manual label >=5 publications, >=100 entries; personal six-table HF dataset |
-| Member 3 | 7 task: S2 query/rate/raw/IDs/mapping/metrics/QA | 7 task: bibliography/bibitem/normalize/ref dedup/cite rewrite/content dedup/handoff | 5 task: manual labels/candidates/integrity/HF/poster | Manual label >=5 publications, >=100 entries; personal six-table HF dataset |
+| Member 3 — Nguyễn Đức Quang | 7 task: S2 query/rate/raw/IDs/mapping/metrics/QA | 7 task: bibliography/bibitem/normalize/ref dedup/cite rewrite/content dedup/handoff | 5 task: manual labels/candidates/integrity/HF/poster | Manual label >=5 publications, >=100 entries; personal six-table HF dataset |
 | Member 4 | 8 task: schemas/storage/QA/metrics/benchmark/leak guard | 5 task: M2 schemas/tree/dedup/coverage/benchmark | 9 task: labels/automatic/split/features/model/MRR/predictions/HF/evidence | Manual label >=5 publications, >=100 entries; personal six-table HF dataset |
 | Member 5 | 8 task: M1 Book/analysis/citations/deploy | 6 task: M2 Book/explanations/figures/analysis/deploy | 6 task: manual labels/analysis/poster/HF/submission | Manual label >=5 publications, >=100 entries; personal six-table HF dataset |
 

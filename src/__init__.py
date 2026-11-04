@@ -1,4 +1,4 @@
-"""Shared arXiv project pipeline package."""
+"""Shared arXiv data pipeline package."""
 
 __all__ = ["__version__"]
 

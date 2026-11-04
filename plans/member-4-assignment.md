@@ -1,4 +1,4 @@
-# Member 4 Assignment — Data Quality, Matching Model và Evaluation
+# Member 4 - Từ Quốc Nghĩa — Data Quality, Matching Model và Evaluation
 
 ## 1. Vai trò
 
