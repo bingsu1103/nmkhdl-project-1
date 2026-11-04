@@ -41,7 +41,7 @@ S2_FIELDS = ",".join([
     "references.publicationDate",
     "references.externalIds",
 ])
-API_KEY_ENV = "S2_API_KEY"
+API_KEY_ENV = "SEMANTIC_SCHOLAR_API_KEY"  # khớp config.py của M1
 
 # Status cuối (terminal) của mỗi citing paper
 STATUS_OK = "ok"
@@ -302,7 +302,7 @@ def crawl_references(
     Crawl references cho danh sách citing papers, mỗi paper lưu 1 file JSON trong out_dir:
     {"status": {...}, "references": [raw records]}.
     Idempotent: paper đã ok/not_found thì dùng lại cache; paper lỗi thì thử lại và ghi đè (không append).
-    API key lấy từ tham số hoặc biến môi trường S2_API_KEY; không có key vẫn chạy anonymous.
+    API key lấy từ tham số hoặc biến môi trường SEMANTIC_SCHOLAR_API_KEY; không có key vẫn chạy anonymous.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
