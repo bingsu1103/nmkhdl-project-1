@@ -4,7 +4,7 @@
 
 **Ngô Gia An** đảm nhận Member 1 và vai trò technical integrator, nhưng **chỉ code trên nhánh** `member-1/discovery-orchestration`. Không sửa, push hoặc rebase nhánh thành viên khác. Việc tích hợp được thực hiện bằng review/merge PR đã đạt gate vào `main`.
 
-Thông tin đã xác nhận: MSSV `23120205`, nhóm `18`, GitHub `bingsu1103`, assigned range `2025-09/16047` đến `2025-09/21046`. Quy ước inclusive/exclusive vẫn phải được xác nhận trước khi expand range thật.
+Thông tin đã xác nhận: MSSV `23120205`, nhóm `18`, GitHub `bingsu1103`, assigned range inclusive `2025-09/16047` đến `2025-09/21046`, tương ứng 5.000 candidate IDs từ `2509.16047` đến `2509.21046`.
 
 Phạm vi chính: nhận assigned IDs, chuẩn hóa/validate, gọi arXiv API để lấy metadata và latest version, enumerate mọi version, cung cấp CLI/orchestrator end-to-end, README và integration gates.
 

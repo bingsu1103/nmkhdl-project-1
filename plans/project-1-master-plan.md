@@ -40,7 +40,7 @@ Vì thế mọi quyết định ở M1 phải bảo toàn dữ liệu cần cho 
 | **BLOCKER trước khi viết report** | Ngôn ngữ chính thức của chương trình | Đề bài yêu cầu mọi submission dùng official language | Viết mã/comment tiếng Anh; giữ report ở trạng thái dàn ý đến khi xác nhận |
 | **Cần xác nhận một phần** | Đã có tên/GitHub Member 1–5; vẫn cần MSSV Member 2–5 | Gán đóng góp và submission metadata chính xác | Không tự suy đoán MSSV |
 | **Cần xác nhận một phần** | ID nhóm **18** và code repo `bingsu1103/nmkhdl-project-1` đã xác nhận; vẫn cần tạo/chốt Jupyter Book repo | Cần URL ổn định để nộp Jupyter Book | Không đổi Pages URL sau khi nộp |
-| **Cần xác nhận cho Member 1** | Quy ước có tính `end_id` hay không | Quyết định Member 1 có 4.999 hay 5.000 candidate IDs | Chưa expand/chạy dữ liệu thật |
+| **Đã xác nhận cho Member 1** | Range dùng `YYYY-MM`, ID 5 chữ số và tính cả `end_id` | Member 1 có 5.000 candidate IDs từ `2509.16047` đến `2509.21046` | Lưu convention inclusive trong manifest |
 | **Cần xác nhận** | Hướng dẫn bổ sung từ Lab Instructors về Hugging Face/Colab và naming dataset cá nhân | Moodle yêu cầu mỗi thành viên upload phần dữ liệu của mình | Thiết kế export Parquet tương thích; chưa publish |
 | Tùy chọn | Semantic Scholar API key | Không bắt buộc, nhưng ổn định hơn pool anonymous | Hỗ trợ cả có/không key qua biến môi trường |
 
@@ -84,7 +84,7 @@ end_month:   2025-09
 end_id:      21046
 ```
 
-Quy ước có tính `end_id` hay không vẫn cần xác nhận trước khi expand/chạy dữ liệu thật. File input thật được giữ local và không commit vào code repository.
+Range Member 1 tính cả hai đầu, nên expand thành đúng 5.000 candidate IDs. File input thật được giữ local và không commit vào code repository.
 
 ## 2. Requirement traceability — điều kiện đạt điểm tối đa
 

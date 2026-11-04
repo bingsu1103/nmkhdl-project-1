@@ -49,7 +49,7 @@ python -m unittest discover -v
 
 Thông tin đã nhận: Ngô Gia An, MSSV `23120205`, nhóm `18`, range `2025-09/16047` đến `2025-09/21046`.
 
-Input thật để tại `local/assigned_ranges.csv`; `local/` đã bị Git ignore. Không chạy expand thật cho đến khi Lab xác nhận `end_id` inclusive hay exclusive.
+Input thật để tại `local/assigned_ranges.csv`; `local/` đã bị Git ignore. Quy ước đã xác nhận là **inclusive**: tính cả `start_id` và `end_id`, tương ứng đúng 5.000 candidate IDs.
 
 Chỉ validate một dòng Member 1, chưa expand:
 
@@ -59,7 +59,7 @@ python -m src.cli validate-ranges \
   --allow-partial
 ```
 
-Sau khi có xác nhận chính thức, chọn **đúng một** cờ boundary và ghi output ngoài repository:
+Expand theo quy ước đã xác nhận và ghi output ngoài repository:
 
 ```bash
 python -m src.cli validate-ranges \
@@ -69,7 +69,7 @@ python -m src.cli validate-ranges \
   --output ../arxiv-data/expanded_ids.csv
 ```
 
-Nếu Lab xác nhận exclusive thì thay `--inclusive-end` bằng `--exclusive-end`. Không chọn theo phỏng đoán.
+Không đổi sang `--exclusive-end`; cờ đó chỉ tồn tại để pipeline hỗ trợ range khác nếu Lab đưa quy ước khác.
 
 ## Chạy fixture end-to-end Phase 1
 
