@@ -7,8 +7,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from src.arxiv_client import InMemoryArxivClient
 from src.cli import EXIT_NOT_IMPLEMENTED, main
+from src.contracts import PaperMetadata
 
 
 class CliTests(unittest.TestCase):
@@ -28,7 +31,7 @@ class CliTests(unittest.TestCase):
     def test_future_command_fails_explicitly(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            code = main(["discover"])
+            code = main(["crawl-sources"])
         self.assertEqual(code, EXIT_NOT_IMPLEMENTED)
         self.assertIn("intentionally not implemented", output.getvalue())
 
@@ -78,6 +81,67 @@ class CliTests(unittest.TestCase):
             self.assertIn('"success": 1', output.getvalue())
             resumed_event = json.loads(events.read_text(encoding="utf-8").splitlines()[0])
             self.assertTrue(resumed_event["details"]["resumed"])
+
+    def test_live_discover_command_writes_handoff_using_mock_client(self) -> None:
+        metadata = PaperMetadata(
+            arxiv_id="2509.16047",
+            latest_versioned_id="2509.16047v2",
+            title="Synthetic paper",
+            authors=("Example Author",),
+            submission_date="2025-09-01",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owned = root / "owned.csv"
+            owned.write_text(
+                "member_id,arxiv_id\nmember-1,2509.16047\n",
+                encoding="utf-8",
+            )
+            data_dir = root / "external-data"
+            output = io.StringIO()
+            with mock.patch(
+                "src.cli.LiveArxivClient",
+                return_value=InMemoryArxivClient({metadata.arxiv_id: metadata}),
+            ):
+                with contextlib.redirect_stdout(output):
+                    code = main(
+                        [
+                            "discover",
+                            "--owned-papers",
+                            str(owned),
+                            "--data-dir",
+                            str(data_dir),
+                            "--user-agent",
+                            "group-18-test",
+                        ]
+                    )
+
+            self.assertEqual(code, 0)
+            self.assertTrue(
+                (data_dir / "manifests" / "discovery" / "discovery_summary.json").exists()
+            )
+            self.assertIn('"version_task_count": 2', output.getvalue())
+
+    def test_live_discover_rejects_data_dir_inside_repo(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            owned = Path(directory) / "owned.csv"
+            owned.write_text(
+                "member_id,arxiv_id\nmember-1,2509.16047\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit) as raised:
+                main(
+                    [
+                        "discover",
+                        "--owned-papers",
+                        str(owned),
+                        "--data-dir",
+                        str(Path(directory) / "data"),
+                        "--user-agent",
+                        "group-18-test",
+                    ]
+                )
+            self.assertEqual(raised.exception.code, 2)
 
 
 if __name__ == "__main__":
