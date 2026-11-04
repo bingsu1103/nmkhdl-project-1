@@ -113,7 +113,7 @@ def test_query_contract_url_params_and_no_key():
 
 
 def test_api_key_from_env_only_in_header(tmp_path, monkeypatch):
-    monkeypatch.setenv("S2_API_KEY", "secret-key-123")
+    monkeypatch.setenv("SEMANTIC_SCHOLAR_API_KEY", "secret-key-123")
     session = FakeSession([ok_payload(SAMPLE_REFS[:1])])
     crawl_references(["2310.12345"], tmp_path, session=session, limiter=fast_limiter())
     assert session.calls[0]["headers"] == {"x-api-key": "secret-key-123"}
