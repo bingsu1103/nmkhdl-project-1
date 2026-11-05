@@ -1,188 +1,427 @@
-# Introduction to Data Science — arXiv Project
+# MEMBER 2 – TẢI MÃ NGUỒN, GIẢI NÉN AN TOÀN VÀ PHÂN TÍCH CẤU TRÚC LATEX
 
-Repository mã nguồn chung của nhóm 18 cho đồ án arXiv môn Nhập môn Khoa học Dữ liệu. Đồ án gồm Milestone 1 Crawling, Milestone 2 Parsing/Standardization và Milestone 3 Matching.
+## 1. Tổng quan
 
-Workspace này là **code repository của toàn đồ án**. Jupyter Book/GitHub Pages là deliverable riêng; đại diện nhóm sẽ nộp URL Pages công khai chứa nội dung M1 + M2.
+Member 2 phụ trách xây dựng giai đoạn xử lý mã nguồn bài báo khoa học trong hệ thống xử lý dữ liệu arXiv.
 
-## Trạng thái hiện tại
+Nhiệm vụ chính là tải mã nguồn của các bài báo được phân công, giải nén dữ liệu một cách an toàn, xác định tài liệu LaTeX chính và phân tích nội dung thành cấu trúc phân cấp có thể sử dụng cho các giai đoạn xử lý tiếp theo.
 
-Member 1 đã hoàn tất contract foundation và phần feature implementation của discovery:
+Mục tiêu là chuyển đổi dữ liệu mã nguồn thô từ arXiv thành dữ liệu có cấu trúc, phục vụ việc trích xuất, tìm kiếm và phân tích nội dung bài báo khoa học.
 
-- Data contracts và status policy dùng chung.
-- Validate/checksum assigned ranges; không tự đoán boundary convention.
-- Typed config với pacing an toàn và không log secret value.
-- Fake và live arXiv clients, batch tối đa 100 IDs/request, pacing tối thiểu 3 giây, timeout, bounded retry và raw-response cache.
-- Deterministic version resolver và metadata/version/status manifests.
-- Atomic checkpoint, crash/resume và structured JSONL events.
-- CLI fixture offline và lệnh `discover` thật có filter `--member`, `--paper`, `--limit`.
+### Các nhiệm vụ chính
 
-Milestone 1 toàn nhóm **chưa hoàn tất**: full discovery Member 1 đã đạt 5.000/5.000 và CLI Semantic Scholar của Member 3 đã được merge, nhưng chưa có downloader/safe extractor của Member 2 trên remote. Semantic Scholar smoke test hiện nhận HTTP 429 khi chạy anonymous; cần API key đặt local/Colab Secret hoặc runtime có quota để hoàn tất reference crawl. Các command chưa tích hợp vẫn trả exit code `3` để không tạo bằng chứng giả.
+- Tải mã nguồn bài báo từ arXiv.
+- Xử lý lỗi mạng, timeout và tải lại khi thất bại.
+- Hỗ trợ tiếp tục quá trình xử lý khi bị gián đoạn.
+- Giải nén các tệp mã nguồn một cách an toàn.
+- Ngăn chặn các rủi ro bảo mật khi giải nén tệp nén.
+- Xác định tệp LaTeX chính của bài báo.
+- Phân tích các lệnh `\input` và `\include` đệ quy.
+- Trích xuất cấu trúc phân cấp của tài liệu LaTeX.
+- Trích xuất văn bản, công thức, hình ảnh, bảng và danh sách.
+- Trích xuất thông tin tài liệu tham khảo.
+- Xuất dữ liệu có cấu trúc để tích hợp với các thành phần khác.
 
-## Cấu trúc
+---
+
+## 2. Quy trình xử lý tổng thể
+
+Quy trình của Member 2 gồm ba giai đoạn chính:
 
 ```text
-.
-├── docs/                    # Contract kỹ thuật đã khóa theo phase
-├── examples/phase1/         # Input synthetic nhỏ để rehearsal offline
-├── instructions/            # Đề bài chính thức của ba milestone
-├── plans/                   # Plan tổng và assignment của 5 thành viên
-├── src/                     # Package pipeline
-└── tests/                   # Unit/integration tests offline
+Manifest danh sách phiên bản bài báo
+              |
+              v
+       Source Downloader
+              |
+              v
+       Tải mã nguồn arXiv
+              |
+              v
+       Safe Archive Extractor
+              |
+              v
+       Giải nén mã nguồn LaTeX
+              |
+              v
+       Hierarchical LaTeX Parser
+              |
+              v
+       Dữ liệu bài báo có cấu trúc
+              |
+              v
+       Các giai đoạn xử lý tiếp theo
 ```
 
-## Yêu cầu môi trường
+### Giai đoạn 1: Tải mã nguồn (Source Downloading)
 
-- Python `>=3.11` vì code dùng `enum.StrEnum`.
-- Discovery arXiv không cần API key; Semantic Scholar key là tùy chọn và không được commit.
-- Lần kiểm tra hiện tại chạy bằng Python 3.14; nhóm vẫn phải rehearsal trên Python/Colab version chính thức trước release.
+Downloader nhận danh sách các bài báo và phiên bản từ giai đoạn Discovery, sau đó tải mã nguồn tương ứng từ arXiv.
 
-Thiết lập local:
+Các chức năng cần thực hiện:
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
+- Tải mã nguồn dựa trên mã định danh arXiv và phiên bản bài báo.
+- Xử lý lỗi HTTP và lỗi kết nối.
+- Triển khai cơ chế thử lại khi tải thất bại.
+- Thiết lập thời gian chờ cho các yêu cầu mạng.
+- Hạn chế tải lại những tệp đã được tải thành công.
+- Lưu trữ tệp đã tải và trạng thái xử lý.
+- Hỗ trợ tiếp tục xử lý khi bị gián đoạn nếu CLI cung cấp chức năng này.
+
+### Giai đoạn 2: Giải nén an toàn (Safe Extraction)
+
+Extractor thực hiện giải nén các tệp mã nguồn đã tải vào những thư mục riêng biệt.
+
+Các yêu cầu về an toàn:
+
+- Ngăn chặn tấn công Path Traversal thông qua đường dẫn như `../`.
+- Từ chối các đường dẫn tuyệt đối không an toàn.
+- Kiểm tra và xử lý Symbolic Link an toàn.
+- Không cho phép giải nén tệp ra ngoài thư mục đích.
+- Xử lý các tệp nén bị lỗi hoặc không được hỗ trợ.
+- Giới hạn hợp lý kích thước tệp và số lượng tệp sau giải nén.
+- Giữ lại tệp nén gốc để phục vụ kiểm tra và tái hiện lỗi.
+
+### Giai đoạn 3: Phân tích LaTeX phân cấp (Hierarchical LaTeX Parsing)
+
+Parser chuyển đổi các tệp LaTeX thành dữ liệu có cấu trúc.
+
+Các chức năng chính:
+
+1. Xác định tệp `.tex` chính, thường chứa lệnh `\documentclass`.
+2. Phân tích đệ quy các lệnh `\input{}` và `\include{}`.
+3. Bỏ qua các lệnh include nằm trong phần chú thích.
+4. Không phân tích những tệp `.tex` không được sử dụng trong tài liệu chính.
+5. Bảo toàn cấu trúc section và subsection.
+6. Trích xuất đoạn văn, câu, công thức, hình ảnh, bảng và danh sách.
+7. Xử lý thông tin trích dẫn và tài liệu tham khảo.
+8. Chuẩn hóa cú pháp LaTeX nhưng vẫn bảo toàn nội dung toán học quan trọng.
+
+---
+
+## 3. Yêu cầu phân tích LaTeX
+
+### 3.1. Cấu trúc tài liệu
+
+Parser cần nhận diện cấu trúc phân cấp của một bài báo khoa học:
+
+```text
+Paper
+ ├── Abstract
+ ├── Section
+ │    ├── Subsection
+ │    │    ├── Paragraph
+ │    │    │    ├── Sentence
+ │    │    │    └── Formula
+ │    │    └── List
+ │    └── Figure
+ ├── Table
+ ├── Acknowledgements
+ ├── Appendix
+ └── References
+```
+
+### 3.2. Các thành phần LaTeX cần hỗ trợ
+
+| Thành phần | Ví dụ |
+|---|---|
+| Tài liệu | `\documentclass`, `\begin{document}` |
+| Tiêu đề mục | `\section`, `\subsection`, `\subsubsection` |
+| Đoạn văn | Các khối văn bản thông thường |
+| Câu | Các câu được tách từ đoạn văn |
+| Công thức | `$...$`, `\(...\)`, `\[...\]`, equation |
+| Hình ảnh | figure, `\includegraphics`, `\caption` |
+| Bảng | table, tabular, `\caption` |
+| Danh sách | itemize, enumerate, `\item` |
+| Tài liệu tham khảo | `\bibliography`, `thebibliography`, BibTeX |
+
+### 3.3. Các trường hợp đặc biệt
+
+Parser cần xử lý những trường hợp sau:
+
+- Biểu thức toán học có chứa dấu chấm.
+- Các từ viết tắt như `e.g.`, `i.e.`, `et al.`.
+- Số thập phân.
+- URL và địa chỉ email.
+- Các dòng chú thích LaTeX.
+- Các môi trường LaTeX lồng nhau.
+- Tài liệu LaTeX gồm nhiều tệp.
+- Lệnh trích dẫn và tài liệu tham khảo.
+- Phần Acknowledgements và Appendix.
+
+Đặc biệt, thuật toán tách câu cần tránh việc chia sai nội dung bên trong công thức toán học, URL, từ viết tắt và số thập phân.
+
+### 3.4. Xử lý tài liệu tham khảo và trùng lặp
+
+Hệ thống cần:
+
+- Trích xuất thông tin tài liệu tham khảo khi có dữ liệu.
+- Bảo toàn các lệnh trích dẫn và mối liên hệ với tài liệu tham khảo.
+- Hạn chế lưu trữ nội dung trùng lặp giữa các phiên bản.
+- Bảo toàn cấu trúc phân cấp riêng của từng phiên bản.
+- Tạo bản ghi có cấu trúc rỗng đối với phiên bản không có mã nguồn LaTeX hợp lệ.
+
+---
+
+## 4. Dữ liệu đầu vào và đầu ra
+
+### 4.1. Dữ liệu đầu vào
+
+Đầu vào chính là danh sách các tác vụ xử lý phiên bản bài báo được tạo ra từ giai đoạn Discovery.
+
+Cấu trúc thư mục dữ liệu dự kiến:
+
+```text
+nmkhdl-project-1-data/
+ ├── manifests/
+ │    └── discovery/
+ │         └── version_tasks.csv
+ ├── sources/
+ ├── extracted/
+ ├── parsed/
+ └── logs/
+```
+
+Lưu ý: Đây là cấu trúc minh họa. Tên thư mục và tệp thực tế cần tuân theo cấu hình chung của dự án.
+
+### 4.2. Dữ liệu đầu ra
+
+Kết quả phân tích dự kiến gồm ba thành phần chính:
+
+| Thành phần | Mô tả |
+|---|---|
+| `elements` | Nội dung được trích xuất từ bài báo: văn bản, công thức, hình ảnh, bảng và các thành phần khác |
+| `hierarchy` | Quan hệ phân cấp giữa tài liệu, section, subsection, paragraph và các phần tử |
+| `bibtex` | Thông tin tài liệu tham khảo và các mục BibTeX |
+
+Định dạng đầu ra cần thống nhất với yêu cầu tích hợp của toàn bộ hệ thống.
+
+---
+
+## 5. Cài đặt môi trường
+
+Thực hiện các lệnh sau tại thư mục gốc của repository.
+
+### Bước 1: Tạo môi trường ảo
+
+```powershell
+python -m venv .venv
+```
+
+### Bước 2: Kích hoạt môi trường
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+### Bước 3: Cài đặt thư viện
+
+```powershell
 python -m pip install -r requirements.txt
-python -m pytest -q
 ```
 
-## Assigned ranges nhóm 18
+Nếu dự án sử dụng thêm các thư viện phục vụ phân tích LaTeX hoặc xử lý tệp nén, cần cài đặt theo cấu hình dependencies của repository.
 
-Đã nhận đủ năm range inclusive, mỗi thành viên 5.000 IDs, union 25.000 IDs không overlap. Member 5 đi qua tháng và dùng explicit monthly ceiling `2025-10=27692`, được xác minh bằng targeted arXiv API.
+---
 
-Input thật để tại `local/assigned_ranges.csv`; `local/` đã bị Git ignore. Validate đủ năm dòng, chưa expand:
+## 6. Hướng dẫn thực thi Member 2
 
-```bash
-python -m src.cli validate-ranges \
-  --ranges-file local/assigned_ranges.csv
-```
+Các lệnh dưới đây mô tả quy trình dự kiến. Trước khi thực thi, cần kiểm tra `python -m src.cli --help` và hướng dẫn của từng subcommand để xác nhận các tham số thực tế.
 
-Expand theo quy ước đã xác nhận và ghi output ngoài repository:
+### Bước 1: Tạo danh sách phiên bản bài báo
 
-```bash
-python -m src.cli validate-ranges \
-  --ranges-file local/assigned_ranges.csv \
-  --inclusive-end \
-  --month-ceiling 2025-10=27692 \
-  --output ../arxiv-data/expanded_ids.csv
-```
-
-Checksums đã xác minh:
+Giai đoạn Discovery cần tạo ra tệp:
 
 ```text
-raw ranges: a49e21baf649021df0dd6a24af58514906aef2a5b0b92608fa0f48c470a20448
-expanded:   e653c561b6a3cac16ea58882475138a3843cecd19a535dc3133578d55d72d7b4
+nmkhdl-project-1-data/manifests/discovery/version_tasks.csv
 ```
 
-## Chạy discovery thật
+Ví dụ:
 
-Chạy riêng Member 1, output luôn nằm ngoài repository:
-
-```bash
-python -m src.cli discover \
-  --owned-papers local/expanded_ids.csv \
-  --data-dir ../nmkhdl-project-1-data \
-  --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" \
-  --member member-1 \
-  --resume
+```powershell
+python -m src.cli discover `
+    --owned-papers examples/phase1/owned_papers.csv `
+    --data-dir ../nmkhdl-project-1-data `
+    --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" `
+    --member member-2 `
+    --resume
 ```
 
-Run chính thức ngày 05/11/2026 đã đạt 5.000/5.000 metadata success và sinh 7.858 version tasks. Nếu run bị gián đoạn, chạy lại cùng input/config với `--resume`.
+**Lưu ý quan trọng:** Tệp `examples/phase1/owned_papers.csv` có thể chỉ chứa dữ liệu mẫu được phân công cho các thành viên khác. Khi xử lý dữ liệu thực tế, cần sử dụng manifest chứa đúng danh sách bài báo của Member 2.
 
-Output chính:
+### Bước 2: Tải và giải nén mã nguồn
+
+```powershell
+python -m src.cli crawl-sources `
+    --data-dir ../nmkhdl-project-1-data `
+    --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" `
+    --member member-2
+```
+
+Cần kiểm tra `crawl-sources --help` trước khi thêm các tham số tùy chọn. Không mặc định rằng lệnh này hỗ trợ `--resume`.
+
+### Bước 3: Phân tích mã nguồn LaTeX
+
+Kiểm tra tham số của lệnh:
+
+```powershell
+python -m src.cli parse-sources --help
+```
+
+Sau đó sử dụng đúng các tham số được CLI cung cấp để chạy quá trình phân tích trên dữ liệu đã giải nén.
+
+---
+
+## 7. Kiểm thử
+
+Các thành phần của Member 2 cần được kiểm thử độc lập trước khi tích hợp vào hệ thống tổng thể.
+
+### 7.1. Các nhóm kiểm thử
+
+| Thành phần | Nội dung kiểm thử |
+|---|---|
+| Downloader | Tải thành công, lỗi HTTP, retry, timeout và tải bị gián đoạn |
+| Extractor | Giải nén hợp lệ, tệp lỗi, Path Traversal, Symbolic Link và giới hạn giải nén |
+| Source Pipeline | Đọc manifest, quản lý trạng thái, tích hợp tải và giải nén |
+| LaTeX Parser | Xác định tài liệu chính, include đệ quy, chú thích, section, công thức, hình ảnh và bảng |
+| Parse Pipeline | Xử lý nhiều phiên bản, thiếu tệp nguồn, tính nhất quán của đầu ra và xử lý lỗi |
+
+### 7.2. Liệt kê các tệp kiểm thử hiện có
+
+```powershell
+Get-ChildItem -Path . -Recurse -File -Include "test_*.py","*_test.py"
+```
+
+### 7.3. Thu thập danh sách test mà chưa thực thi
+
+```powershell
+python -m pytest tests -v --collect-only
+```
+
+### 7.4. Chạy toàn bộ test
+
+```powershell
+python -m pytest -v
+```
+
+### 7.5. Lưu kết quả kiểm thử
+
+```powershell
+python -m pytest tests -v --tb=short |
+    Tee-Object -FilePath member2_test_results.txt
+```
+
+Chỉ ghi nhận một test là thành công sau khi test đó thực sự được thực thi và cho kết quả đạt yêu cầu trên repository hiện tại.
+
+---
+
+## 8. Xử lý lỗi và đảm bảo độ tin cậy
+
+Hệ thống cần xử lý các trường hợp:
+
+- Không thể kết nối mạng.
+- HTTP 404 hoặc mã nguồn arXiv không khả dụng.
+- Quá thời gian tải xuống.
+- Tệp nén bị hỏng.
+- Định dạng tệp nén không được hỗ trợ.
+- Đường dẫn giải nén không an toàn.
+- Không tìm thấy tệp `.tex` chính.
+- Thiếu các tệp `.tex` được include.
+- Vòng lặp đệ quy trong các lệnh `\input` hoặc `\include`.
+- Cú pháp LaTeX không thể phân tích.
+- Thiếu tệp thư mục tài liệu tham khảo.
+- Tệp mã nguồn rỗng hoặc không đầy đủ.
+
+Lỗi xảy ra ở một phiên bản bài báo không nên làm dừng toàn bộ quá trình xử lý những bài báo khác.
+
+Mỗi tác vụ cần có trạng thái xử lý và mô tả lỗi tương ứng để thuận tiện cho việc theo dõi và khôi phục.
+
+---
+
+## 9. Tích hợp với các thành viên khác
+
+Member 2 phụ thuộc vào dữ liệu đầu ra từ giai đoạn Discovery của Member 1.
+
+Quy trình tích hợp dự kiến:
 
 ```text
-<data-dir>/
-├── raw/arxiv_api/                     # Atom XML cache theo batch
-├── checkpoints/discovery/             # checkpoint theo publication
-├── events/discovery.jsonl             # structured stage events
-└── manifests/discovery/
-    ├── papers.jsonl
-    ├── version_tasks.csv
-    ├── discovery_status.jsonl
-    └── discovery_summary.json
+Member 1: Paper Discovery
+          |
+          v
+Version Task Manifest
+          |
+          v
+Member 2: Download + Extract + Parse
+          |
+          v
+Structured Paper Data
+          |
+          v
+Member 3: Reference / BibTeX Processing
+          |
+          v
+Member 4: Quality Matching
+          |
+          v
+Member 5: Book / Poster Processing
 ```
 
-Không đổi `retryable_failure` thành success thủ công. Xem run evidence và checksums tại `docs/member1-discovery-run-2026-11-05.md`.
+Các giao diện và cấu trúc dữ liệu đầu ra cần được thống nhất với các thành viên khác trước khi tích hợp chính thức.
 
-## References, tables và validation M1
+Member 2 cần đảm bảo:
 
-Semantic Scholar key là tùy chọn nhưng anonymous endpoint có thể trả HTTP 429. Nếu có key, tự đặt trong shell/Colab Secret; không gửi hoặc commit key:
+- Giữ nguyên mã định danh bài báo và phiên bản.
+- Theo dõi được trạng thái xử lý từng tác vụ.
+- Đầu ra tương thích với các module xử lý phía sau.
+- Có thể xác định và xử lý lại các tác vụ thất bại.
+- Không âm thầm bỏ qua dữ liệu bị thiếu hoặc không hợp lệ.
 
-```bash
-export SEMANTIC_SCHOLAR_API_KEY="<your-key>"
-python -m src.cli crawl-references \
-  --owned-papers local/expanded_ids.csv \
-  --data-dir ../nmkhdl-project-1-data \
-  --member member-1
-```
+---
 
-Chỉ sau khi mọi publication có S2 terminal status `ok` hoặc `not_found`:
+## 10. Các yêu cầu về bảo mật
 
-```bash
-python -m src.cli build-tables \
-  --data-dir ../nmkhdl-project-1-data
+Mã nguồn bài báo tải từ Internet được xem là dữ liệu đầu vào không đáng tin cậy.
 
-python -m src.cli validate \
-  --owned-papers local/expanded_ids.csv \
-  --data-dir ../nmkhdl-project-1-data \
-  --member member-1
-```
+Extractor tuyệt đối không được cho phép tệp nén:
 
-`build-tables` sẽ fail nếu S2 còn thiếu, unexpected hoặc non-terminal status; không tạo bảng thiếu dữ liệu để vượt validation giả.
+- Ghi tệp ra ngoài thư mục giải nén được chỉ định.
+- Ghi đè các tệp không liên quan trong dự án.
+- Tạo Symbolic Link không an toàn.
+- Làm cạn kiệt dung lượng lưu trữ do giải nén quá mức.
+- Tiêu thụ tài nguyên hệ thống không kiểm soát.
 
-## Chạy fixture end-to-end Phase 1
+Tất cả đường dẫn bên trong tệp nén cần được kiểm tra trước khi thực hiện giải nén.
 
-Tạo output ngoài repository rồi chạy:
+---
 
-```bash
-mkdir -p ../arxiv-data-phase1
-python -m src.cli fixture-discover \
-  --owned-papers examples/phase1/owned_papers.csv \
-  --metadata-fixture examples/phase1/metadata.json \
-  --checkpoint-dir ../arxiv-data-phase1/checkpoints \
-  --events-output ../arxiv-data-phase1/events.jsonl
-```
+## 11. Checklist hoàn thành Member 2
 
-Kết quả mong đợi: exit code `0`, `paper_count` bằng `2`, `success` bằng `2`, checkpoint JSON theo publication và file `events.jsonl` có structured events.
+- [ ] Tìm hiểu cấu trúc manifest từ Member 1.
+- [ ] Xây dựng chức năng tải mã nguồn.
+- [ ] Xử lý retry và timeout.
+- [ ] Xây dựng chức năng giải nén an toàn.
+- [ ] Kiểm tra đường dẫn và giới hạn giải nén.
+- [ ] Xác định tệp LaTeX chính.
+- [ ] Phân tích đệ quy `\input` và `\include`.
+- [ ] Trích xuất cấu trúc phân cấp tài liệu.
+- [ ] Trích xuất công thức, hình ảnh, bảng và danh sách.
+- [ ] Xây dựng thuật toán tách câu.
+- [ ] Trích xuất thông tin tài liệu tham khảo.
+- [ ] Xử lý trường hợp thiếu hoặc không hợp lệ mã nguồn LaTeX.
+- [ ] Xuất dữ liệu phân tích có cấu trúc.
+- [ ] Viết unit test cho từng thành phần.
+- [ ] Chạy kiểm thử và lưu kết quả.
+- [ ] Tích hợp với pipeline tổng thể.
+- [ ] Hoàn thiện tài liệu hướng dẫn và các giới hạn đã biết.
 
-Chạy lại bằng checkpoint:
+---
 
-```bash
-python -m src.cli fixture-discover \
-  --owned-papers examples/phase1/owned_papers.csv \
-  --metadata-fixture examples/phase1/metadata.json \
-  --checkpoint-dir ../arxiv-data-phase1/checkpoints \
-  --events-output ../arxiv-data-phase1/events-resumed.jsonl \
-  --resume
-```
+## 12. Thông tin đóng góp
 
-Event resumed có `"resumed": true`. Nếu bytes của một trong hai input thay đổi, fingerprint đổi và pipeline không reuse checkpoint cũ.
+| Thuộc tính | Thông tin |
+|---|---|
+| Thành viên | Member 2 |
+| Nhánh Git | `member-2/source-parsing` |
+| Phạm vi phụ trách | Tải mã nguồn, giải nén an toàn và phân tích LaTeX phân cấp |
+| Repository | https://github.com/bingsu1103/nmkhdl-project-1 |
 
-## Exit codes
-
-| Code | Ý nghĩa |
-|---:|---|
-| `0` | Lệnh hoàn tất và mọi selected paper success |
-| `2` | Config/input validation error (`argparse` kết thúc) |
-| `3` | Command thuộc phase sau, chưa được triển khai |
-| `4` | Run có ít nhất một paper không success |
-
-## Quy tắc Git
-
-- `main` chỉ để tích hợp; không phát triển trực tiếp.
-- Mỗi member làm đúng branch của mình, không push/rebase/sửa branch người khác.
-- Member 1 dùng `member-1/discovery-orchestration`.
-- Merge qua Pull Request sau khi tests và review pass.
-- Không commit corpus, Parquet outputs, archives, logs, checkpoints, credentials hoặc API keys.
-
-Thiết lập Ruleset/branch protection, required review và merge policy trên GitHub là thao tác owner thực hiện thủ công. Codex không tự đổi GitHub Settings theo yêu cầu của chủ repository.
-
-## Tài liệu
-
-- [Kế hoạch tổng](plans/project-1-master-plan.md)
-- [Assignment Member 1](plans/member-1-assignment.md)
-- [Phase 1 contracts](docs/phase1-contracts.md)
-- [Milestone 1 integration status](docs/milestone1-integration-status.md)
-- [Member 1 full discovery evidence](docs/member1-discovery-run-2026-11-05.md)
-- [Đề bài](instructions/index.md)
+Các thay đổi cần được commit lên nhánh được phân công. Sau khi hoàn thành kiểm thử và xác nhận khả năng tương thích với các thành phần khác, tiến hành tạo Pull Request để tích hợp vào nhánh chính của dự án.
