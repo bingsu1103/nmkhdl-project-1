@@ -45,7 +45,6 @@ from .s2_client import (
 
 EXIT_OK = 0
 EXIT_CONFIG_ERROR = 2
-EXIT_NOT_IMPLEMENTED = 3
 EXIT_PARTIAL_FAILURE = 4
 
 
@@ -230,11 +229,6 @@ def _validate_ranges(args: argparse.Namespace) -> int:
 
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return EXIT_OK
-
-
-def _not_implemented(args: argparse.Namespace) -> int:
-    print(f"Command '{args.command}' is intentionally not implemented in Phase 1 scaffold.")
-    return EXIT_NOT_IMPLEMENTED
 
 
 def _add_m1_workflow_arguments(parser: argparse.ArgumentParser) -> None:
