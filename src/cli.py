@@ -28,6 +28,8 @@ from .ids import (
 )
 from .version_resolver import VersionResolutionError
 from .pipeline import DiscoveryPipeline
+from .source_pipeline import run_source_pipeline
+from .parse_pipeline import run_parse_pipeline
 from .s2_client import (
     DONE_STATUSES,
     crawl_references,
@@ -95,6 +97,30 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--resume", action="store_true")
     discover.set_defaults(handler=_discover)
 
+    sources = subparsers.add_parser(
+        "crawl-sources",
+        help="Download versioned arXiv source and safely extract .tex/.bib files.",
+    )
+    sources.add_argument("--data-dir", type=Path, required=True)
+    sources.add_argument("--user-agent", required=True)
+    sources.add_argument("--member")
+    sources.add_argument("--paper", action="append", default=[])
+    sources.add_argument("--limit", type=int)
+    sources.add_argument("--delay-seconds", type=float, default=3.0)
+    sources.add_argument("--connect-timeout", type=float, default=10.0)
+    sources.add_argument("--read-timeout", type=float, default=60.0)
+    sources.add_argument("--max-attempts", type=int, default=4)
+    sources.add_argument("--no-resume", action="store_true")
+    sources.set_defaults(handler=_crawl_sources)
+
+    parse_sources = subparsers.add_parser(
+        "parse-sources",
+        help="Build compilation paths and hierarchical elements from extracted TeX.",
+    )
+    parse_sources.add_argument("--data-dir", type=Path, required=True)
+    parse_sources.add_argument("--member")
+    parse_sources.set_defaults(handler=_parse_sources)
+
     references = subparsers.add_parser(
         "crawl-references",
         help="Crawl Semantic Scholar references for owned base arXiv IDs.",
@@ -125,7 +151,6 @@ def build_parser() -> argparse.ArgumentParser:
     validate.set_defaults(handler=_validate_m1)
 
     for name in (
-        "crawl-sources",
         "benchmark",
         "run-all",
     ):
@@ -145,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         Milestone1IntegrationError,
         RangeValidationError,
         VersionResolutionError,
+        OSError,
+        ValueError,
     ) as exc:
         parser.error(str(exc))
     return EXIT_CONFIG_ERROR
@@ -305,6 +332,35 @@ def _discover(args: argparse.Namespace) -> int:
         )
     )
     return EXIT_OK if result.succeeded else EXIT_PARTIAL_FAILURE
+
+
+def _crawl_sources(args: argparse.Namespace) -> int:
+    data_dir = _external_data_dir(args.data_dir)
+    summary = run_source_pipeline(
+        version_tasks_csv=data_dir / "manifests" / "discovery" / "version_tasks.csv",
+        data_dir=data_dir,
+        user_agent=args.user_agent,
+        member_id=args.member,
+        paper_ids=set(args.paper) if args.paper else None,
+        limit=args.limit,
+        delay_seconds=args.delay_seconds,
+        timeout=(args.connect_timeout, args.read_timeout),
+        max_attempts=args.max_attempts,
+        resume=not args.no_resume,
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    failed = sum(
+        count for status, count in summary["status_counts"].items()
+        if status != "success" and status != "no_tex_bib"
+    )
+    return EXIT_OK if failed == 0 else EXIT_PARTIAL_FAILURE
+
+
+def _parse_sources(args: argparse.Namespace) -> int:
+    data_dir = _external_data_dir(args.data_dir)
+    summary = run_parse_pipeline(data_dir=data_dir, member_id=args.member)
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK if summary["failed_or_partial"] == 0 else EXIT_PARTIAL_FAILURE
 
 
 def _crawl_references(args: argparse.Namespace) -> int:
