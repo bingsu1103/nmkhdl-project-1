@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .normalize import normalize_paper_record
-from .s2_client import build_references_rows, load_raw_references
+from .s2_client import DONE_STATUSES, build_references_rows, load_raw_references
 from .storage import (
     PAPERS_SCHEMA,
     REFERENCES_SCHEMA,
@@ -37,7 +37,12 @@ def build_m1_tables(
     paper_records = [normalize_paper_record(row) for row in _read_jsonl(papers_jsonl)]
     if not paper_records:
         raise Milestone1IntegrationError("Discovery papers manifest is empty.")
-    raw_references = load_raw_references(Path(s2_raw_dir))
+    s2_root = Path(s2_raw_dir)
+    _require_complete_s2_statuses(
+        s2_root,
+        expected_ids={str(row["arxiv_id"]) for row in paper_records},
+    )
+    raw_references = load_raw_references(s2_root)
     reference_rows, duplicate_count = build_references_rows(raw_references)
 
     papers_table = create_table_from_records(paper_records, PAPERS_SCHEMA)
@@ -116,3 +121,29 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def _require_complete_s2_statuses(root: Path, *, expected_ids: set[str]) -> None:
+    if not root.exists():
+        raise Milestone1IntegrationError(f"Missing Semantic Scholar raw directory: {root}")
+    observed: set[str] = set()
+    incomplete: list[str] = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            status = payload["status"]
+            arxiv_id = str(status["arxiv_id"])
+            state = str(status["status"])
+        except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise Milestone1IntegrationError(f"Invalid S2 cache artifact: {path}") from exc
+        observed.add(arxiv_id)
+        if state not in DONE_STATUSES:
+            incomplete.append(arxiv_id)
+    missing = expected_ids - observed
+    unexpected = observed - expected_ids
+    if missing or unexpected or incomplete:
+        raise Milestone1IntegrationError(
+            "Semantic Scholar artifacts are incomplete: "
+            f"missing={len(missing)}, unexpected={len(unexpected)}, "
+            f"non_terminal={len(incomplete)}"
+        )

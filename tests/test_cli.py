@@ -169,6 +169,37 @@ class CliTests(unittest.TestCase):
                 )
             self.assertEqual(raised.exception.code, 2)
 
+    def test_crawl_references_uses_member_filter_without_network(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owned = root / "owned.csv"
+            owned.write_text(
+                "member_id,arxiv_id\nmember-1,2509.16047\nmember-2,2509.21047\n",
+                encoding="utf-8",
+            )
+            fake_status = {
+                "arxiv_id": "2509.16047",
+                "status": "ok",
+                "raw_reference_count": 0,
+                "parse_failures": 0,
+            }
+            with mock.patch("src.cli.crawl_references", return_value=[fake_status]) as crawl:
+                with mock.patch("src.cli.load_raw_references", return_value=[]):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        code = main(
+                            [
+                                "crawl-references",
+                                "--owned-papers",
+                                str(owned),
+                                "--data-dir",
+                                str(root / "data"),
+                                "--member",
+                                "member-1",
+                            ]
+                        )
+            self.assertEqual(code, 0)
+            self.assertEqual(crawl.call_args.args[0], ["2509.16047"])
+
 
 if __name__ == "__main__":
     unittest.main()

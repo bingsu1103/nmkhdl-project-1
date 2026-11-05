@@ -33,7 +33,7 @@ class Milestone1IntegrationTests(unittest.TestCase):
             (s2_dir / "2509.16047.json").write_text(
                 json.dumps(
                     {
-                        "status": {"status": "ok"},
+                        "status": {"arxiv_id": "2509.16047", "status": "ok"},
                         "references": [
                             {
                                 "arxiv_id": "2509.16047",
@@ -66,6 +66,32 @@ class Milestone1IntegrationTests(unittest.TestCase):
             self.assertEqual(table_summary["references_rows"], 1)
             self.assertTrue(validation["is_valid"])
             self.assertTrue(validation["reconciliation"]["is_reconciled"])
+
+    def test_refuses_to_build_before_s2_is_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            papers = root / "papers.jsonl"
+            papers.write_text(
+                json.dumps(
+                    {
+                        "arxiv_id": "2509.16047",
+                        "latest_versioned_id": "2509.16047v1",
+                        "title": "Synthetic paper",
+                        "authors": ["Example Author"],
+                        "submission_date": "2025-09-19",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            from src.m1_integration import Milestone1IntegrationError
+
+            with self.assertRaisesRegex(Milestone1IntegrationError, "Missing Semantic"):
+                build_m1_tables(
+                    papers_jsonl=papers,
+                    s2_raw_dir=root / "missing-s2",
+                    output_dir=root / "tables",
+                )
 
 
 if __name__ == "__main__":

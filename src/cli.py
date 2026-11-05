@@ -12,6 +12,11 @@ from .arxiv_client import DiscoveryError, InMemoryArxivClient, LiveArxivClient
 from .checkpoint import JsonCheckpointStore, write_events_jsonl
 from .contracts import OwnedPaper, PaperMetadata, StageStatus
 from .discovery_output import write_discovery_outputs
+from .m1_integration import (
+    Milestone1IntegrationError,
+    build_m1_tables,
+    validate_m1_tables,
+)
 from .ids import (
     RangeConvention,
     RangeValidationError,
@@ -23,6 +28,12 @@ from .ids import (
 )
 from .version_resolver import VersionResolutionError
 from .pipeline import DiscoveryPipeline
+from .s2_client import (
+    DONE_STATUSES,
+    crawl_references,
+    load_raw_references,
+    summarize_s2_crawl,
+)
 
 EXIT_OK = 0
 EXIT_CONFIG_ERROR = 2
@@ -84,11 +95,37 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--resume", action="store_true")
     discover.set_defaults(handler=_discover)
 
+    references = subparsers.add_parser(
+        "crawl-references",
+        help="Crawl Semantic Scholar references for owned base arXiv IDs.",
+    )
+    references.add_argument("--owned-papers", type=Path, required=True)
+    references.add_argument("--data-dir", type=Path, required=True)
+    references.add_argument("--member")
+    references.add_argument("--paper", action="append", default=[])
+    references.add_argument("--limit", type=int)
+    references.add_argument("--max-attempts", type=int, default=4)
+    references.add_argument("--timeout-seconds", type=float, default=30.0)
+    references.set_defaults(handler=_crawl_references)
+
+    build_tables = subparsers.add_parser(
+        "build-tables",
+        help="Build M1 papers/references Parquet tables from completed artifacts.",
+    )
+    build_tables.add_argument("--data-dir", type=Path, required=True)
+    build_tables.set_defaults(handler=_build_tables)
+
+    validate = subparsers.add_parser(
+        "validate",
+        help="Validate M1 tables and reconcile them against the owned manifest.",
+    )
+    validate.add_argument("--owned-papers", type=Path, required=True)
+    validate.add_argument("--data-dir", type=Path, required=True)
+    validate.add_argument("--member")
+    validate.set_defaults(handler=_validate_m1)
+
     for name in (
         "crawl-sources",
-        "crawl-references",
-        "build-tables",
-        "validate",
         "benchmark",
         "run-all",
     ):
@@ -103,7 +140,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.handler(args))
-    except (DiscoveryError, RangeValidationError, VersionResolutionError) as exc:
+    except (
+        DiscoveryError,
+        Milestone1IntegrationError,
+        RangeValidationError,
+        VersionResolutionError,
+    ) as exc:
         parser.error(str(exc))
     return EXIT_CONFIG_ERROR
 
@@ -190,14 +232,7 @@ def _fixture_discover(args: argparse.Namespace) -> int:
 
 
 def _discover(args: argparse.Namespace) -> int:
-    data_dir = args.data_dir.expanduser().resolve()
-    repo_root = Path.cwd().resolve()
-    try:
-        data_dir.relative_to(repo_root)
-    except ValueError:
-        pass
-    else:
-        raise RangeValidationError("--data-dir must be outside the tracked repository")
+    data_dir = _external_data_dir(args.data_dir)
     if args.limit is not None and args.limit <= 0:
         raise RangeValidationError("--limit must be a positive integer")
 
@@ -272,6 +307,65 @@ def _discover(args: argparse.Namespace) -> int:
     return EXIT_OK if result.succeeded else EXIT_PARTIAL_FAILURE
 
 
+def _crawl_references(args: argparse.Namespace) -> int:
+    data_dir = _external_data_dir(args.data_dir)
+    if args.limit is not None and args.limit <= 0:
+        raise RangeValidationError("--limit must be a positive integer")
+    papers = _read_owned_papers(args.owned_papers)
+    papers = _filter_owned_papers(
+        papers,
+        member=args.member,
+        selected_ids=set(args.paper),
+        limit=args.limit,
+    )
+    statuses = crawl_references(
+        [paper.arxiv_id for paper in papers],
+        data_dir / "raw" / "s2",
+        max_retries=args.max_attempts,
+        timeout=args.timeout_seconds,
+    )
+    raw_records = load_raw_references(data_dir / "raw" / "s2")
+    summary = summarize_s2_crawl(statuses, raw_records)
+    summary_path = data_dir / "manifests" / "s2_summary.json"
+    _write_json_atomic(summary_path, summary)
+    print(json.dumps({**summary, "summary_output": str(summary_path)}, ensure_ascii=False, indent=2))
+    return (
+        EXIT_OK
+        if all(status.get("status") in DONE_STATUSES for status in statuses)
+        else EXIT_PARTIAL_FAILURE
+    )
+
+
+def _build_tables(args: argparse.Namespace) -> int:
+    data_dir = _external_data_dir(args.data_dir)
+    summary = build_m1_tables(
+        papers_jsonl=data_dir / "manifests" / "discovery" / "papers.jsonl",
+        s2_raw_dir=data_dir / "raw" / "s2",
+        output_dir=data_dir / "tables",
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
+def _validate_m1(args: argparse.Namespace) -> int:
+    data_dir = _external_data_dir(args.data_dir)
+    papers = _filter_owned_papers(
+        _read_owned_papers(args.owned_papers),
+        member=args.member,
+        selected_ids=set(),
+        limit=None,
+    )
+    result = validate_m1_tables(
+        tables_dir=data_dir / "tables",
+        assigned_ids=[paper.arxiv_id for paper in papers],
+        failed_discovery_ids=_failed_discovery_ids(
+            data_dir / "manifests" / "discovery" / "discovery_status.jsonl"
+        ),
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK if result["is_valid"] else EXIT_PARTIAL_FAILURE
+
+
 def _read_owned_papers(path: Path) -> list[OwnedPaper]:
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -293,6 +387,29 @@ def _read_owned_papers(path: Path) -> list[OwnedPaper]:
         raise RangeValidationError("owned papers CSV contains an empty or invalid row")
     if len({item.arxiv_id for item in papers}) != len(papers):
         raise RangeValidationError("owned papers CSV contains duplicate arXiv IDs")
+    return papers
+
+
+def _filter_owned_papers(
+    papers: list[OwnedPaper],
+    *,
+    member: str | None,
+    selected_ids: set[str],
+    limit: int | None,
+) -> list[OwnedPaper]:
+    if member:
+        papers = [paper for paper in papers if paper.member_id == member]
+    if selected_ids:
+        papers = [paper for paper in papers if paper.arxiv_id in selected_ids]
+        missing = selected_ids - {paper.arxiv_id for paper in papers}
+        if missing:
+            raise RangeValidationError(
+                f"Requested --paper IDs are not in the owned manifest: {sorted(missing)}"
+            )
+    if limit is not None:
+        papers = papers[:limit]
+    if not papers:
+        raise RangeValidationError("No owned papers remain after applying filters")
     return papers
 
 
@@ -347,6 +464,41 @@ def _parse_month_ceilings(values: list[str]) -> dict[str, int]:
             raise RangeValidationError(f"Duplicate --month-ceiling for {month}")
         result[month] = ceiling
     return result
+
+
+def _external_data_dir(path: Path) -> Path:
+    data_dir = path.expanduser().resolve()
+    try:
+        data_dir.relative_to(Path.cwd().resolve())
+    except ValueError:
+        return data_dir
+    raise RangeValidationError("--data-dir must be outside the tracked repository")
+
+
+def _failed_discovery_ids(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    failed: list[str] = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if row.get("status") != StageStatus.SUCCESS.value:
+                failed.append(str(row["arxiv_id"]))
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        raise Milestone1IntegrationError(f"Invalid discovery status artifact: {path}") from exc
+    return failed
+
+
+def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 if __name__ == "__main__":  # pragma: no cover
