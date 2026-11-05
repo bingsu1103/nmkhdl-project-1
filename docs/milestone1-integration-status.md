@@ -21,7 +21,8 @@
 - Metadata mapping, version enumeration, atomic checkpoint/resume.
 - `discover` CLI và handoff files cho metadata, version tasks, statuses, events, summary.
 - Full Member 1 discovery: 5.000/5.000 success, 7.858 version tasks.
-- 118 tests pass sau cross-month support; ResourceMonitor test cần quyền đọc process metrics của runtime.
+- CLI `crawl-references`, `build-tables`, `validate` đã nối qua public interfaces của Member 3/4; table builder có completeness guard.
+- 121 tests pass sau cross-month support và M1 integration gates; ResourceMonitor test cần quyền đọc process metrics của runtime.
 
 ## Runtime evidence
 
@@ -30,6 +31,7 @@ Pilot retry đạt 3/3. Full discovery Member 1 sau đó đạt 5.000/5.000 meta
 ## Blockers trước khi Milestone 1 toàn nhóm hoàn tất
 
 1. Member 2 push/merge downloader và safe extractor để xử lý mọi version.
-2. Tích hợp discovery/version manifest với S2, storage/validation/metrics thành `run-all`.
-3. Chạy source/reference stages, reconciliation và benchmark Colab CPU-only.
-4. Member 5 hoàn tất Jupyter Book M1 và cung cấp Pages URL.
+2. S2 smoke-test 3 paper nhận HTTP 429; cần retry bằng `SEMANTIC_SCHOLAR_API_KEY` đặt local/Colab Secret hoặc runtime có quota.
+3. Hoàn tất 5.000 S2 terminal statuses rồi build/validate hai bảng M1.
+4. Tích hợp source stage và metrics thành `run-all`; chạy reconciliation và benchmark Colab CPU-only.
+5. Member 5 hoàn tất Jupyter Book M1 và cung cấp Pages URL.

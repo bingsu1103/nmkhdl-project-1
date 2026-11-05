@@ -105,6 +105,32 @@ Output chính:
 
 Không đổi `retryable_failure` thành success thủ công. Xem run evidence và checksums tại `docs/member1-discovery-run-2026-11-05.md`.
 
+## References, tables và validation M1
+
+Semantic Scholar key là tùy chọn nhưng anonymous endpoint có thể trả HTTP 429. Nếu có key, tự đặt trong shell/Colab Secret; không gửi hoặc commit key:
+
+```bash
+export SEMANTIC_SCHOLAR_API_KEY="<your-key>"
+python -m src.cli crawl-references \
+  --owned-papers local/expanded_ids.csv \
+  --data-dir ../nmkhdl-project-1-data \
+  --member member-1
+```
+
+Chỉ sau khi mọi publication có S2 terminal status `ok` hoặc `not_found`:
+
+```bash
+python -m src.cli build-tables \
+  --data-dir ../nmkhdl-project-1-data
+
+python -m src.cli validate \
+  --owned-papers local/expanded_ids.csv \
+  --data-dir ../nmkhdl-project-1-data \
+  --member member-1
+```
+
+`build-tables` sẽ fail nếu S2 còn thiếu, unexpected hoặc non-terminal status; không tạo bảng thiếu dữ liệu để vượt validation giả.
+
 ## Chạy fixture end-to-end Phase 1
 
 Tạo output ngoài repository rồi chạy:
