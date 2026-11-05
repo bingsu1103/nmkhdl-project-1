@@ -84,6 +84,25 @@ Thông tin đã xác nhận: MSSV `23120204`, nhóm `18`, GitHub `laykhanhan0106
 - Đối chiếu thủ công nhỏ: endpoint/version, file inventory, hash/content commands.
 - Report mọi unsupported payload thật; không ép status thành success.
 
+### MS1-M2-T08 — Chạy và nghiệm thu range cá nhân
+
+Ngoài việc sở hữu downloader/extractor chung, Lày Khánh An phải tự chạy hoặc trực tiếp nghiệm thu toàn bộ M1 cho đúng 5.000 paper thuộc `member-2`.
+
+```bash
+python -m src.cli discover --owned-papers local/expanded_ids.csv --data-dir ../nmkhdl-project-1-data-member-2 --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" --member member-2 --resume
+python -m src.cli crawl-sources --data-dir ../nmkhdl-project-1-data-member-2 --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" --member member-2
+python -m src.cli crawl-references --owned-papers local/expanded_ids.csv --data-dir ../nmkhdl-project-1-data-member-2 --member member-2
+```
+
+- Dùng data directory riêng như trên; không dùng chung manifest đang được member khác ghi.
+- Chỉ dùng `expanded_ids.csv` đã xác minh checksum nhóm; không tự sửa range để né lỗi.
+- Semantic Scholar key, nếu có, chỉ đặt trong environment/Colab Secret; không gửi cho thành viên khác và không commit.
+- Discovery phải có status cho đủ 5.000 paper; mọi expected version phải có source terminal status; S2 phải có terminal status cho đủ scope.
+- Retry lỗi tạm thời; giữ `no_source`, `no_tex_bib`, `not_found` và lỗi vĩnh viễn trong denominator thay vì xóa.
+- Bàn giao manifest, summary, checksums, run ID và failure list cho M1/M4/M5; corpus thật không được commit vào Git.
+
+**Acceptance:** range `member-2` không còn pending/unknown; expected versions reconcile với source statuses; `papers`/`references` của range pass schema, FK và uniqueness gates hoặc có failure list trung thực.
+
 ## 5. Interface bàn giao
 
 Input tối thiểu:
