@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from src.arxiv_client import InMemoryArxivClient
-from src.cli import EXIT_NOT_IMPLEMENTED, main
+from src.cli import main
 from src.contracts import PaperMetadata
 
 
@@ -54,14 +54,140 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(len(output_path.read_text(encoding="utf-8").splitlines()), 5)
 
-    def test_future_commands_fail_explicitly(self) -> None:
-        for command in ("benchmark", "run-all"):
-            with self.subTest(command=command):
-                output = io.StringIO()
-                with contextlib.redirect_stdout(output):
-                    code = main([command])
-                self.assertEqual(code, EXIT_NOT_IMPLEMENTED)
-                self.assertIn("intentionally not implemented", output.getvalue())
+    def test_run_all_builds_and_validates_complete_m1_release(self) -> None:
+        metadata = PaperMetadata(
+            arxiv_id="2509.16047",
+            latest_versioned_id="2509.16047v1",
+            title="Synthetic paper",
+            authors=("Example Author",),
+            submission_date="2025-09-01",
+        )
+
+        class FakeMonitor:
+            def __init__(self, **_: object) -> None:
+                pass
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> dict[str, float]:
+                return {
+                    "peak_ram_mb": 10.0,
+                    "avg_ram_mb": 9.0,
+                    "time_weighted_ram_mb": 9.5,
+                    "max_disk_mb": 1.0,
+                    "final_storage_mb": 1.0,
+                    "sample_count": 1,
+                    "sampling_interval_sec": 0.5,
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owned = root / "owned.csv"
+            owned.write_text(
+                "member_id,arxiv_id\nmember-1,2509.16047\n",
+                encoding="utf-8",
+            )
+            data_dir = root / "external-data"
+
+            def fake_source_pipeline(**kwargs: object) -> dict[str, object]:
+                destination = Path(kwargs["data_dir"]) / "manifests" / "source_status.jsonl"
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(
+                    json.dumps(
+                        {
+                            "member_id": "member-1",
+                            "arxiv_id": "2509.16047",
+                            "versioned_arxiv_id": "2509.16047v1",
+                            "version": 1,
+                            "status": "success",
+                            "download": {"archive_bytes": 100},
+                            "extraction": {"filtered_bytes": 75},
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                return {
+                    "expected_version_tasks": 1,
+                    "terminal_status_records": 1,
+                    "manifest_status_records": 1,
+                    "status_counts": {"success": 1},
+                }
+
+            def fake_crawl(ids: object, out_dir: Path, **_: object) -> list[dict[str, object]]:
+                self.assertEqual(list(ids), ["2509.16047"])
+                out_dir.mkdir(parents=True, exist_ok=True)
+                status = {
+                    "arxiv_id": "2509.16047",
+                    "status": "ok",
+                    "parse_failures": 0,
+                }
+                (out_dir / "2509.16047.json").write_text(
+                    json.dumps({"status": status, "references": []}),
+                    encoding="utf-8",
+                )
+                return [status]
+
+            with mock.patch(
+                "src.cli.LiveArxivClient",
+                return_value=InMemoryArxivClient({metadata.arxiv_id: metadata}),
+            ):
+                with mock.patch("src.cli.run_source_pipeline", side_effect=fake_source_pipeline):
+                    with mock.patch("src.cli.crawl_references", side_effect=fake_crawl):
+                        with mock.patch("src.cli.ResourceMonitor", FakeMonitor):
+                            with contextlib.redirect_stdout(io.StringIO()):
+                                code = main(
+                                    [
+                                        "run-all",
+                                        "--owned-papers",
+                                        str(owned),
+                                        "--data-dir",
+                                        str(data_dir),
+                                        "--user-agent",
+                                        "group-18-test",
+                                        "--member",
+                                        "member-1",
+                                    ]
+                                )
+
+            self.assertEqual(code, 0)
+            run_summary = json.loads(
+                (data_dir / "manifests" / "m1_run_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            metrics = json.loads(
+                (data_dir / "metrics" / "summary.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(run_summary["is_success"])
+            self.assertTrue(run_summary["source_completeness"]["is_complete"])
+            self.assertTrue(run_summary["validation"]["is_valid"])
+            self.assertEqual(metrics["crawl_statistics"]["papers_scraped_successfully"], 1)
+
+    def test_benchmark_rejects_nonempty_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            owned = root / "owned.csv"
+            owned.write_text(
+                "member_id,arxiv_id\nmember-1,2509.16047\n",
+                encoding="utf-8",
+            )
+            data_dir = root / "external-data"
+            (data_dir / "raw").mkdir(parents=True)
+            with self.assertRaises(SystemExit) as raised:
+                main(
+                    [
+                        "benchmark",
+                        "--owned-papers",
+                        str(owned),
+                        "--data-dir",
+                        str(data_dir),
+                        "--user-agent",
+                        "group-18-test",
+                    ]
+                )
+            self.assertEqual(raised.exception.code, 2)
 
     def test_fixture_discovery_runs_end_to_end_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

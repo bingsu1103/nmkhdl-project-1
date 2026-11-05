@@ -6,6 +6,8 @@ import argparse
 import csv
 import hashlib
 import json
+import subprocess
+import time
 from pathlib import Path
 
 from .arxiv_client import DiscoveryError, InMemoryArxivClient, LiveArxivClient
@@ -15,8 +17,10 @@ from .discovery_output import write_discovery_outputs
 from .m1_integration import (
     Milestone1IntegrationError,
     build_m1_tables,
+    validate_source_completeness,
     validate_m1_tables,
 )
+from .metrics import ResourceMonitor, generate_benchmark_summary
 from .ids import (
     RangeConvention,
     RangeValidationError,
@@ -29,6 +33,8 @@ from .ids import (
 from .version_resolver import VersionResolutionError
 from .pipeline import DiscoveryPipeline
 from .source_pipeline import run_source_pipeline
+from .storage import PAPERS_SCHEMA, REFERENCES_SCHEMA, read_sharded_parquet
+from .validate import compute_crawl_statistics
 from .parse_pipeline import run_parse_pipeline
 from .s2_client import (
     DONE_STATUSES,
@@ -150,12 +156,19 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--member")
     validate.set_defaults(handler=_validate_m1)
 
-    for name in (
-        "benchmark",
+    run_all = subparsers.add_parser(
         "run-all",
-    ):
-        command = subparsers.add_parser(name, help=f"{name} (implemented in a later PR).")
-        command.set_defaults(handler=_not_implemented)
+        help="Run all Milestone 1 stages with resume and release gates.",
+    )
+    _add_m1_workflow_arguments(run_all)
+    run_all.set_defaults(handler=_run_all, benchmark_mode=False)
+
+    benchmark = subparsers.add_parser(
+        "benchmark",
+        help="Run Milestone 1 end-to-end in a clean data directory with resource monitoring.",
+    )
+    _add_m1_workflow_arguments(benchmark)
+    benchmark.set_defaults(handler=_run_all, benchmark_mode=True)
 
     return parser
 
@@ -222,6 +235,24 @@ def _validate_ranges(args: argparse.Namespace) -> int:
 def _not_implemented(args: argparse.Namespace) -> int:
     print(f"Command '{args.command}' is intentionally not implemented in Phase 1 scaffold.")
     return EXIT_NOT_IMPLEMENTED
+
+
+def _add_m1_workflow_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--owned-papers", type=Path, required=True)
+    parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument("--user-agent", required=True)
+    parser.add_argument("--member")
+    parser.add_argument("--paper", action="append", default=[])
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--batch-size", type=int, default=100)
+    parser.add_argument("--delay-seconds", type=float, default=3.0)
+    parser.add_argument("--timeout-seconds", type=float, default=30.0)
+    parser.add_argument("--connect-timeout", type=float, default=10.0)
+    parser.add_argument("--read-timeout", type=float, default=60.0)
+    parser.add_argument("--max-attempts", type=int, default=4)
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--monitor-interval-seconds", type=float, default=0.5)
+    parser.add_argument("--disk-interval-seconds", type=float, default=2.0)
 
 
 def _fixture_discover(args: argparse.Namespace) -> int:
@@ -425,6 +456,189 @@ def _validate_m1(args: argparse.Namespace) -> int:
     return EXIT_OK if result["is_valid"] else EXIT_PARTIAL_FAILURE
 
 
+def _run_all(args: argparse.Namespace) -> int:
+    """Run every Milestone 1 stage and emit auditable metrics and release gates."""
+
+    data_dir = _external_data_dir(args.data_dir)
+    selected_papers = _filter_owned_papers(
+        _read_owned_papers(args.owned_papers),
+        member=args.member,
+        selected_ids=set(args.paper),
+        limit=args.limit,
+    )
+    if args.benchmark_mode:
+        if args.resume:
+            raise RangeValidationError("benchmark requires a clean run; do not use --resume")
+        existing = [
+            name
+            for name in ("raw", "corpus", "manifests", "tables", "metrics", "checkpoints", "events")
+            if (data_dir / name).exists()
+        ]
+        if existing:
+            raise RangeValidationError(
+                "benchmark requires a clean data directory; existing outputs: "
+                + ", ".join(existing)
+            )
+
+    monitor = ResourceMonitor(
+        data_dir=data_dir,
+        interval_sec=args.monitor_interval_seconds,
+        disk_interval_sec=args.disk_interval_seconds,
+    )
+    started = time.monotonic()
+    stage_durations: dict[str, float] = {}
+    monitor.start()
+    discovery_code = EXIT_CONFIG_ERROR
+    source_code = EXIT_CONFIG_ERROR
+    s2_code = EXIT_CONFIG_ERROR
+    source_summary: dict[str, object] = {}
+    source_completeness: dict[str, object] = {}
+    s2_summary: dict[str, object] = {}
+    table_summary: dict[str, object] | None = None
+    validation: dict[str, object] | None = None
+    crawl_statistics: dict[str, object] | None = None
+    try:
+        stage_started = time.monotonic()
+        discovery_code = _discover(args)
+        stage_durations["discovery_seconds"] = round(time.monotonic() - stage_started, 4)
+
+        stage_started = time.monotonic()
+        source_summary = run_source_pipeline(
+            version_tasks_csv=data_dir / "manifests" / "discovery" / "version_tasks.csv",
+            data_dir=data_dir,
+            user_agent=args.user_agent,
+            member_id=args.member,
+            paper_ids=set(args.paper) if args.paper else None,
+            limit=None,
+            delay_seconds=args.delay_seconds,
+            timeout=(args.connect_timeout, args.read_timeout),
+            max_attempts=args.max_attempts,
+            resume=args.resume,
+        )
+        stage_durations["source_seconds"] = round(time.monotonic() - stage_started, 4)
+        source_failures = sum(
+            count
+            for status, count in source_summary["status_counts"].items()
+            if status not in {"success", "no_tex_bib"}
+        )
+        source_code = EXIT_OK if source_failures == 0 else EXIT_PARTIAL_FAILURE
+        source_completeness = validate_source_completeness(
+            version_tasks_csv=data_dir / "manifests" / "discovery" / "version_tasks.csv",
+            source_status_jsonl=data_dir / "manifests" / "source_status.jsonl",
+            member_id=args.member,
+        )
+
+        paper_records = _read_jsonl_objects(
+            data_dir / "manifests" / "discovery" / "papers.jsonl"
+        )
+        successful_ids = [str(row["arxiv_id"]) for row in paper_records]
+        if not successful_ids:
+            raise Milestone1IntegrationError("Discovery produced no successful papers.")
+
+        stage_started = time.monotonic()
+        statuses = crawl_references(
+            successful_ids,
+            data_dir / "raw" / "s2",
+            max_retries=args.max_attempts,
+            timeout=args.timeout_seconds,
+        )
+        raw_records = load_raw_references(data_dir / "raw" / "s2")
+        s2_summary = summarize_s2_crawl(statuses, raw_records)
+        _write_json_atomic(data_dir / "manifests" / "s2_summary.json", s2_summary)
+        stage_durations["semantic_scholar_seconds"] = round(
+            time.monotonic() - stage_started, 4
+        )
+        s2_complete = all(status.get("status") in DONE_STATUSES for status in statuses)
+        s2_code = EXIT_OK if s2_complete else EXIT_PARTIAL_FAILURE
+
+        if s2_complete:
+            stage_started = time.monotonic()
+            table_summary = build_m1_tables(
+                papers_jsonl=data_dir / "manifests" / "discovery" / "papers.jsonl",
+                s2_raw_dir=data_dir / "raw" / "s2",
+                output_dir=data_dir / "tables",
+            )
+            validation = validate_m1_tables(
+                tables_dir=data_dir / "tables",
+                assigned_ids=[paper.arxiv_id for paper in selected_papers],
+                failed_discovery_ids=_failed_discovery_ids(
+                    data_dir / "manifests" / "discovery" / "discovery_status.jsonl"
+                ),
+                version_tasks_csv=data_dir / "manifests" / "discovery" / "version_tasks.csv",
+                source_status_jsonl=data_dir / "manifests" / "source_status.jsonl",
+                member_id=args.member,
+            )
+            papers_table = read_sharded_parquet(data_dir / "tables" / "papers", PAPERS_SCHEMA)
+            references_table = read_sharded_parquet(
+                data_dir / "tables" / "references", REFERENCES_SCHEMA
+            )
+            source_rows = _read_jsonl_objects(data_dir / "manifests" / "source_status.jsonl")
+            if args.member:
+                source_rows = [row for row in source_rows if row.get("member_id") == args.member]
+            crawl_statistics = compute_crawl_statistics(
+                assigned_ids=[paper.arxiv_id for paper in selected_papers],
+                papers_table=papers_table,
+                references_table=references_table,
+                source_status_records=source_rows,
+                s2_attempted_count=int(s2_summary["s2_citing_papers_attempted"]),
+                s2_succeeded_count=int(s2_summary["s2_citing_papers_succeeded"]),
+                total_raw_references_count=int(s2_summary["raw_references_total"]),
+            )
+            stage_durations["tables_and_validation_seconds"] = round(
+                time.monotonic() - stage_started, 4
+            )
+    finally:
+        resource_metrics = monitor.stop()
+
+    total_seconds = round(time.monotonic() - started, 4)
+    performance_metrics: dict[str, object] = {
+        **resource_metrics,
+        **stage_durations,
+        "total_end_to_end_time_sec": total_seconds,
+        "avg_time_per_paper_sec": round(total_seconds / max(1, len(selected_papers)), 4),
+        "selected_paper_count": len(selected_papers),
+        "benchmark_mode": bool(args.benchmark_mode),
+    }
+    metrics_path = None
+    if crawl_statistics is not None:
+        metrics_path = data_dir / "metrics" / "summary.json"
+        generate_benchmark_summary(
+            stats_crawling=crawl_statistics,
+            performance_metrics=performance_metrics,
+            output_path=metrics_path,
+            git_sha=_git_sha(),
+        )
+
+    validation_ok = bool(validation and validation.get("is_valid"))
+    succeeded = (
+        discovery_code == EXIT_OK
+        and source_code == EXIT_OK
+        and s2_code == EXIT_OK
+        and bool(source_completeness.get("is_complete"))
+        and validation_ok
+    )
+    run_summary: dict[str, object] = {
+        "mode": "benchmark" if args.benchmark_mode else "run-all",
+        "is_success": succeeded,
+        "stage_exit_codes": {
+            "discovery": discovery_code,
+            "sources": source_code,
+            "semantic_scholar": s2_code,
+        },
+        "source": source_summary,
+        "source_completeness": source_completeness,
+        "semantic_scholar": s2_summary,
+        "tables": table_summary,
+        "validation": validation,
+        "performance": performance_metrics,
+        "metrics_summary": str(metrics_path) if metrics_path else None,
+    }
+    output_path = data_dir / "manifests" / "m1_run_summary.json"
+    _write_json_atomic(output_path, run_summary)
+    print(json.dumps({**run_summary, "run_summary": str(output_path)}, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK if succeeded else EXIT_PARTIAL_FAILURE
+
+
 def _read_owned_papers(path: Path) -> list[OwnedPaper]:
     try:
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -523,6 +737,39 @@ def _parse_month_ceilings(values: list[str]) -> dict[str, int]:
             raise RangeValidationError(f"Duplicate --month-ceiling for {month}")
         result[month] = ceiling
     return result
+
+
+def _read_jsonl_objects(path: Path) -> list[dict[str, object]]:
+    try:
+        rows: list[dict[str, object]] = []
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise Milestone1IntegrationError(
+                    f"JSONL row {line_number} is not an object: {path}"
+                )
+            rows.append(row)
+        return rows
+    except OSError as exc:
+        raise Milestone1IntegrationError(f"Cannot read JSONL artifact: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise Milestone1IntegrationError(f"Invalid JSONL artifact: {path}") from exc
+
+
+def _git_sha() -> str:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    return completed.stdout.strip() or "unknown"
 
 
 def _external_data_dir(path: Path) -> Path:
