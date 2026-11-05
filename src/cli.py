@@ -417,6 +417,9 @@ def _validate_m1(args: argparse.Namespace) -> int:
         failed_discovery_ids=_failed_discovery_ids(
             data_dir / "manifests" / "discovery" / "discovery_status.jsonl"
         ),
+        version_tasks_csv=data_dir / "manifests" / "discovery" / "version_tasks.csv",
+        source_status_jsonl=data_dir / "manifests" / "source_status.jsonl",
+        member_id=args.member,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return EXIT_OK if result["is_valid"] else EXIT_PARTIAL_FAILURE

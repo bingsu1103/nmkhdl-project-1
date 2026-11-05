@@ -57,6 +57,9 @@ def run_source_pipeline(
     )
     extractor = SafeSourceExtractor(output_dir=extracted_dir)
     run_id = str(uuid4())
+    manifest = root / "manifests" / "source_status.jsonl"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    persisted = _load_status_manifest(manifest)
     statuses: list[dict[str, Any]] = []
     for task in tasks:
         arxiv_id, versioned_id = task["arxiv_id"], task["versioned_arxiv_id"]
@@ -69,6 +72,8 @@ def run_source_pipeline(
                     "version": int(task["version"]), "status": download.status,
                     "download": asdict(download), "extraction": None,
                 })
+                persisted[_status_key(statuses[-1])] = statuses[-1]
+                _write_status_manifest(manifest, persisted.values())
                 continue
             extracted = extractor.extract(
                 download.archive_path, arxiv_id=arxiv_id, versioned_arxiv_id=versioned_id,
@@ -87,20 +92,15 @@ def run_source_pipeline(
                 "error_code": type(exc).__name__, "error_message": str(exc),
                 "download": None, "extraction": None,
             })
-
-    manifest = root / "manifests" / "source_status.jsonl"
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    temporary = manifest.with_suffix(".jsonl.tmp")
-    with temporary.open("w", encoding="utf-8") as handle:
-        for status in statuses:
-            handle.write(json.dumps(status, ensure_ascii=False, sort_keys=True) + "\n")
-    temporary.replace(manifest)
+        persisted[_status_key(statuses[-1])] = statuses[-1]
+        _write_status_manifest(manifest, persisted.values())
     counts: dict[str, int] = {}
     for row in statuses:
         counts[row["status"]] = counts.get(row["status"], 0) + 1
     summary = {
         "run_id": run_id, "expected_version_tasks": len(tasks),
         "terminal_status_records": len(statuses), "status_counts": dict(sorted(counts.items())),
+        "manifest_status_records": len(persisted),
         "source_status_manifest": str(manifest),
         "archive_bytes": sum((r.get("download") or {}).get("archive_bytes", 0) for r in statuses),
         "filtered_tex_bib_bytes": sum((r.get("extraction") or {}).get("filtered_bytes", 0) for r in statuses),
@@ -108,3 +108,49 @@ def run_source_pipeline(
     summary_path = root / "manifests" / "source_summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8")
     return summary
+
+
+def _status_key(row: dict[str, Any]) -> str:
+    versioned_id = str(row.get("versioned_arxiv_id") or "").strip()
+    if not versioned_id:
+        raise ValueError("source status is missing versioned_arxiv_id")
+    return versioned_id
+
+
+def _load_status_manifest(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    rows: dict[str, dict[str, Any]] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid source status JSONL at line {line_number}") from exc
+        if not isinstance(row, dict):
+            raise ValueError(f"source status row {line_number} is not an object")
+        key = _status_key(row)
+        if key in rows:
+            raise ValueError(f"duplicate source status for {key}")
+        rows[key] = row
+    return rows
+
+
+def _write_status_manifest(path: Path, rows: Any) -> None:
+    ordered = sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("member_id") or ""),
+            str(row.get("arxiv_id") or ""),
+            int(row.get("version") or 0),
+        ),
+    )
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        for row in ordered:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        import os
+        os.fsync(handle.fileno())
+    temporary.replace(path)

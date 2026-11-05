@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.m1_integration import build_m1_tables, validate_m1_tables
+from src.m1_integration import (
+    build_m1_tables,
+    validate_m1_tables,
+    validate_source_completeness,
+)
 
 
 class Milestone1IntegrationTests(unittest.TestCase):
@@ -66,6 +70,58 @@ class Milestone1IntegrationTests(unittest.TestCase):
             self.assertEqual(table_summary["references_rows"], 1)
             self.assertTrue(validation["is_valid"])
             self.assertTrue(validation["reconciliation"]["is_reconciled"])
+
+    def test_reconciles_expected_versions_with_terminal_source_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tasks = root / "version_tasks.csv"
+            tasks.write_text(
+                "member_id,arxiv_id,versioned_arxiv_id,version,status,run_id\n"
+                "member-1,2509.16047,2509.16047v1,1,pending,run\n"
+                "member-1,2509.16047,2509.16047v2,2,pending,run\n",
+                encoding="utf-8",
+            )
+            statuses = root / "source_status.jsonl"
+            statuses.write_text(
+                json.dumps(
+                    {
+                        "member_id": "member-1",
+                        "arxiv_id": "2509.16047",
+                        "versioned_arxiv_id": "2509.16047v1",
+                        "status": "success",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            report = validate_source_completeness(
+                version_tasks_csv=tasks,
+                source_status_jsonl=statuses,
+                member_id="member-1",
+            )
+            self.assertFalse(report["is_complete"])
+            self.assertEqual(report["missing_ids"], ["2509.16047v2"])
+
+            with statuses.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps(
+                        {
+                            "member_id": "member-1",
+                            "arxiv_id": "2509.16047",
+                            "versioned_arxiv_id": "2509.16047v2",
+                            "status": "no_tex_bib",
+                        }
+                    )
+                    + "\n"
+                )
+            report = validate_source_completeness(
+                version_tasks_csv=tasks,
+                source_status_jsonl=statuses,
+                member_id="member-1",
+            )
+            self.assertTrue(report["is_complete"])
+            self.assertEqual(report["status_counts"], {"no_tex_bib": 1, "success": 1})
 
     def test_refuses_to_build_before_s2_is_complete(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
