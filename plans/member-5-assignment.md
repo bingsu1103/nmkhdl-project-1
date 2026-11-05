@@ -4,6 +4,8 @@
 
 **Phạm Phúc An Khang** làm việc duy nhất trên nhánh `member-5/book-poster`. Sở hữu `book/` trong code repo, repository deploy Pages, analysis và poster. Nếu cần thay đổi pipeline, phải mở issue cho đúng owner; không chỉnh dữ liệu để làm narrative đẹp hơn.
 
+Thông tin đã xác nhận: MSSV `20120303`, nhóm `18`, GitHub `PPAKhang`, assigned range inclusive `2025-10/24401..2025-11/01708`. Với monthly ceiling đã xác minh `2510.27692`, range expand thành `2510.24401..2510.27692` và `2511.00001..2511.01708`, tổng 5.000 candidate IDs.
+
 Sở hữu Jupyter Book Milestone 1, CI/GitHub Pages, analysis notebooks, bibliography, mapping report-to-evidence và final link QA.
 
 ## 2. Requirement chịu trách nhiệm

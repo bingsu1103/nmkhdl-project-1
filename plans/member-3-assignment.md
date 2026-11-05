@@ -4,6 +4,8 @@
 
 **Nguyễn Đức Quang** đảm nhận Member 3 và **chỉ làm việc trên nhánh** `member-3/references-bibtex`. Sở hữu Semantic Scholar client, raw reference retention, BibTeX conversion/reference deduplication và lineage. Không sửa downloader, schema/export hoặc report để che lỗi dữ liệu.
 
+Thông tin đã xác nhận: MSSV `20120359`, nhóm `18`, GitHub `ducquang2`, assigned range inclusive `2025-10/19401..2025-10/24400`, tương ứng `2510.19401..2510.24400` và 5.000 candidate IDs.
+
 ## 2. Requirement chịu trách nhiệm
 
 - R08–R10.

@@ -4,6 +4,8 @@
 
 Làm việc duy nhất trên nhánh `member-4/quality-matching`. Là data-contract/quality owner và ML owner: validate sáu bảng, reconciliation, metrics/benchmark, labeling contract, feature/model/evaluation. Không chỉnh API clients/report prose để ép dữ liệu qua validation.
 
+Thông tin đã xác nhận: MSSV `24120389`, nhóm `18`, GitHub `tuquocnghia`, assigned range inclusive `2024-09/13594..2024-09/18593`, tương ứng `2409.13594..2409.18593` và 5.000 candidate IDs.
+
 ## 2. Requirement chịu trách nhiệm
 
 - R07, R10–R12.

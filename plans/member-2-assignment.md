@@ -4,6 +4,8 @@
 
 Lày Khánh An đảm nhận làm việc trên nhánh `member-2/source-parsing`. Sở hữu luồng tải source từng version, trích xuất chỉ `.tex`/`.bib`, compilation graph và hierarchy parser. Không chỉnh nhánh/file của người khác ngoài quy trình issue + owner change.
 
+Thông tin đã xác nhận: MSSV `23120204`, nhóm `18`, GitHub `laykhanhan01062005-star`, assigned range inclusive `2025-09/21047..2025-09/26046`, tương ứng `2509.21047..2509.26046` và 5.000 candidate IDs.
+
 ## 2. Requirement chịu trách nhiệm
 
 - R03–R06.

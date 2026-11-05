@@ -2,7 +2,7 @@
 
 > Phạm vi: toàn bộ đồ án Nhập môn Khoa học Dữ liệu, dựa trên `instructions/index.md`, `instructions/crawling.md`, `instructions/parsing.md`, `instructions/matching.md` và thông tin các cổng nộp Moodle do sinh viên cung cấp.
 >
-> Trạng thái tại ngày 24/10/2026: **Có thể bắt đầu thiết kế, viết mã khung và kiểm thử giả lập; chưa thể chạy dữ liệu chính thức** vì mới có tên bốn cột range nhưng chưa có giá trị range của năm thành viên.
+> Trạng thái ngày 05/11/2026: đã nhận và expand đủ năm range thành 25.000 candidate IDs; full discovery Member 1 đã đạt 5.000/5.000 metadata success và sinh 7.858 version tasks. Milestone 1 toàn nhóm vẫn chờ downloader/safe extractor của Member 2 và full integration.
 
 ## 0. Xác định đúng phạm vi đồ án
 
@@ -35,12 +35,12 @@ Vì thế mọi quyết định ở M1 phải bảo toàn dữ liệu cần cho 
 
 | Mức độ | Đầu vào còn thiếu | Vì sao cần | Có thể làm gì trước khi có |
 |---|---|---|---|
-| **BLOCKER cho full-group run** | Mới có range Member 1; vẫn cần bốn dòng `start_month`, `start_id`, `end_month`, `end_id` của Member 2–5 | Union năm range là corpus nhóm | Có thể chạy Member 1; chưa công bố coverage toàn nhóm |
+| **Đã xác nhận** | Năm range inclusive, mỗi member 5.000 candidate IDs; union 25.000 IDs | Input corpus toàn nhóm | Manifest/checksum đã tạo ngoài Git |
 | **Đã xác nhận** | Deadline theo giờ Việt Nam (`Asia/Ho_Chi_Minh`): Jupyter Book **06/11/2026 23:59**, GitHub Repository **14/11/2026 23:59**, Hugging Face **20/11/2026 23:59**, Poster **27/11/2026 23:59** | Chốt lịch freeze, review và submit | Dùng lịch cụ thể ở mục 18 |
 | **BLOCKER trước khi viết report** | Ngôn ngữ chính thức của chương trình | Đề bài yêu cầu mọi submission dùng official language | Viết mã/comment tiếng Anh; giữ report ở trạng thái dàn ý đến khi xác nhận |
-| **Cần xác nhận một phần** | Đã có tên/GitHub Member 1–5; vẫn cần MSSV Member 2–5 | Gán đóng góp và submission metadata chính xác | Không tự suy đoán MSSV |
+| **Đã xác nhận** | Họ tên, MSSV và GitHub mapping của Member 1–5 | Gán đóng góp và submission metadata | Dùng bảng mục 1.3 |
 | **Cần xác nhận một phần** | ID nhóm **18** và code repo `bingsu1103/nmkhdl-project-1` đã xác nhận; vẫn cần tạo/chốt Jupyter Book repo | Cần URL ổn định để nộp Jupyter Book | Không đổi Pages URL sau khi nộp |
-| **Đã xác nhận cho Member 1** | Range dùng `YYYY-MM`, ID 5 chữ số và tính cả `end_id` | Member 1 có 5.000 candidate IDs từ `2509.16047` đến `2509.21046` | Lưu convention inclusive trong manifest |
+| **Đã xác nhận** | Range dùng `YYYY-MM`, ID 5 chữ số, tính cả `end_id`; ceiling `2025-10=27692` cho cross-month | Mỗi member đúng 5.000 IDs, Member 5 đi qua tháng 10–11 | Fail explicit nếu cross-month thiếu ceiling |
 | **Cần xác nhận** | Hướng dẫn bổ sung từ Lab Instructors về Hugging Face/Colab và naming dataset cá nhân | Moodle yêu cầu mỗi thành viên upload phần dữ liệu của mình | Thiết kế export Parquet tương thích; chưa publish |
 | Tùy chọn | Semantic Scholar API key | Không bắt buộc, nhưng ổn định hơn pool anonymous | Hỗ trợ cả có/không key qua biến môi trường |
 
@@ -51,10 +51,10 @@ Không yêu cầu người dùng gửi mật khẩu, GitHub token, API key hoặ
 | Vai trò | Họ tên | GitHub | Trạng thái |
 |---|---|---|---|
 | Member 1 | **Ngô Gia An — MSSV 23120205** | `bingsu1103` | Đã xác nhận — nhóm 18; technical integrator, discovery/versioning/orchestration |
-| Member 2 | **Lày Khánh An** |  `laykhanhan01062005-star` | Đã xác nhận — Source Download, Safe Extraction và Hierarchy Parsing |
-| Member 3 | **Nguyễn Đức Quang** | `ducquang2` | Đã xác nhận — Semantic Scholar, BibTeX conversion/reference dedup |
-| Member 4 | **Từ Quốc Nghĩa** | `tuquocnghia` | Đã xác nhận — data quality, metrics, matching model/evaluation |
-| Member 5 | **Phạm Phúc An Khang** | `PPAKhang` | Đã xác nhận — Jupyter Book, Analysis, Citations, Poster và Submission QA |
+| Member 2 | **Lày Khánh An — MSSV 23120204** | `laykhanhan01062005-star` | Đã xác nhận — Source Download, Safe Extraction và Hierarchy Parsing |
+| Member 3 | **Nguyễn Đức Quang — MSSV 20120359** | `ducquang2` | Đã xác nhận — Semantic Scholar, BibTeX conversion/reference dedup |
+| Member 4 | **Từ Quốc Nghĩa — MSSV 24120389** | `tuquocnghia` | Đã xác nhận — data quality, metrics, matching model/evaluation |
+| Member 5 | **Phạm Phúc An Khang — MSSV 20120303** | `PPAKhang` | Đã xác nhận — Jupyter Book, Analysis, Citations, Poster và Submission QA |
 
 ### 1.4. Format cần gửi — không cần liệt kê từng arXiv ID
 
@@ -71,20 +71,17 @@ member-5,YYMM,NNNNN,YYMM,NNNNN
 
 Range manifest phải lưu `member_id` và bốn giá trị gốc, checksum, thời điểm import và danh sách ID đã expand. Cách zero-pad, xử lý range đi qua nhiều tháng và việc hai đầu có được tính hay không phải theo ví dụ/quy ước Lab xác nhận; không tự suy đoán từ tên cột.
 
-Range đã nhận cho Member 1:
+Range inclusive đã nhận và kiểm chứng:
 
-```text
-member_id:   member-1
-student_id:  23120205
-student:     Ngô Gia An
-group_id:    18
-start_month: 2025-09
-start_id:    16047
-end_month:   2025-09
-end_id:      21046
-```
+| Member | MSSV | Raw range | Expanded boundary | Count |
+|---|---:|---|---|---:|
+| Member 1 — Ngô Gia An | 23120205 | `2025-09/16047..2025-09/21046` | `2509.16047..2509.21046` | 5.000 |
+| Member 2 — Lày Khánh An | 23120204 | `2025-09/21047..2025-09/26046` | `2509.21047..2509.26046` | 5.000 |
+| Member 3 — Nguyễn Đức Quang | 20120359 | `2025-10/19401..2025-10/24400` | `2510.19401..2510.24400` | 5.000 |
+| Member 4 — Từ Quốc Nghĩa | 24120389 | `2024-09/13594..2024-09/18593` | `2409.13594..2409.18593` | 5.000 |
+| Member 5 — Phạm Phúc An Khang | 20120303 | `2025-10/24401..2025-11/01708` | `2510.24401..2510.27692`, `2511.00001..2511.01708` | 5.000 |
 
-Range Member 1 tính cả hai đầu, nên expand thành đúng 5.000 candidate IDs. File input thật được giữ local và không commit vào code repository.
+Union có 25.000 IDs, không overlap. Range manifest SHA-256 là `a49e21baf649021df0dd6a24af58514906aef2a5b0b92608fa0f48c470a20448`; expanded manifest SHA-256 là `e653c561b6a3cac16ea58882475138a3843cecd19a535dc3133578d55d72d7b4`. File input/output thật được giữ local và không commit vào code repository.
 
 ## 2. Requirement traceability — điều kiện đạt điểm tối đa
 

@@ -46,18 +46,15 @@ python -m pip install -r requirements.txt
 python -m pytest -q
 ```
 
-## Assigned range của Member 1
+## Assigned ranges nhóm 18
 
-Thông tin đã nhận: Ngô Gia An, MSSV `23120205`, nhóm `18`, range `2025-09/16047` đến `2025-09/21046`.
+Đã nhận đủ năm range inclusive, mỗi thành viên 5.000 IDs, union 25.000 IDs không overlap. Member 5 đi qua tháng và dùng explicit monthly ceiling `2025-10=27692`, được xác minh bằng targeted arXiv API.
 
-Input thật để tại `local/assigned_ranges.csv`; `local/` đã bị Git ignore. Quy ước đã xác nhận là **inclusive**: tính cả `start_id` và `end_id`, tương ứng đúng 5.000 candidate IDs.
-
-Chỉ validate một dòng Member 1, chưa expand:
+Input thật để tại `local/assigned_ranges.csv`; `local/` đã bị Git ignore. Validate đủ năm dòng, chưa expand:
 
 ```bash
 python -m src.cli validate-ranges \
-  --ranges-file local/assigned_ranges.csv \
-  --allow-partial
+  --ranges-file local/assigned_ranges.csv
 ```
 
 Expand theo quy ước đã xác nhận và ghi output ngoài repository:
@@ -65,26 +62,32 @@ Expand theo quy ước đã xác nhận và ghi output ngoài repository:
 ```bash
 python -m src.cli validate-ranges \
   --ranges-file local/assigned_ranges.csv \
-  --allow-partial \
   --inclusive-end \
+  --month-ceiling 2025-10=27692 \
   --output ../arxiv-data/expanded_ids.csv
 ```
 
-Không đổi sang `--exclusive-end`; cờ đó chỉ tồn tại để pipeline hỗ trợ range khác nếu Lab đưa quy ước khác.
+Checksums đã xác minh:
+
+```text
+raw ranges: a49e21baf649021df0dd6a24af58514906aef2a5b0b92608fa0f48c470a20448
+expanded:   e653c561b6a3cac16ea58882475138a3843cecd19a535dc3133578d55d72d7b4
+```
 
 ## Chạy discovery thật
 
-Pilot ba paper đầu, output luôn nằm ngoài repository:
+Chạy riêng Member 1, output luôn nằm ngoài repository:
 
 ```bash
 python -m src.cli discover \
   --owned-papers local/expanded_ids.csv \
   --data-dir ../nmkhdl-project-1-data \
   --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" \
-  --limit 3
+  --member member-1 \
+  --resume
 ```
 
-Khi pilot thành công, bỏ `--limit` để chạy đủ manifest. Nếu run bị gián đoạn, chạy lại cùng input/config với `--resume`.
+Run chính thức ngày 05/11/2026 đã đạt 5.000/5.000 metadata success và sinh 7.858 version tasks. Nếu run bị gián đoạn, chạy lại cùng input/config với `--resume`.
 
 Output chính:
 
@@ -100,7 +103,7 @@ Output chính:
     └── discovery_summary.json
 ```
 
-Không đổi `retryable_failure` thành success thủ công. Pilot ngày 04/11/2026 gặp HTTP 429/`ReadTimeout`; cần chờ rate-limit hạ hoặc chạy từ Colab/network khác rồi dùng `--resume`.
+Không đổi `retryable_failure` thành success thủ công. Xem run evidence và checksums tại `docs/member1-discovery-run-2026-11-05.md`.
 
 ## Chạy fixture end-to-end Phase 1
 
@@ -155,4 +158,5 @@ Thiết lập Ruleset/branch protection, required review và merge policy trên 
 - [Assignment Member 1](plans/member-1-assignment.md)
 - [Phase 1 contracts](docs/phase1-contracts.md)
 - [Milestone 1 integration status](docs/milestone1-integration-status.md)
+- [Member 1 full discovery evidence](docs/member1-discovery-run-2026-11-05.md)
 - [Đề bài](instructions/index.md)
