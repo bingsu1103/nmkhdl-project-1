@@ -103,7 +103,7 @@ Output chính:
     └── discovery_summary.json
 ```
 
-Không đổi `retryable_failure` thành success thủ công. Xem run evidence và checksums tại `docs/member1-discovery-run-2026-11-05.md`.
+Không đổi `retryable_failure` thành success thủ công. Runtime summary, checksums và corpus thật được giữ ngoài Git; Jupyter Book đọc các artifact máy sinh thay vì dựa vào nhật ký Markdown thủ công.
 
 ## References, tables và validation M1
 
@@ -183,6 +183,4 @@ Thiết lập Ruleset/branch protection, required review và merge policy trên 
 - [Kế hoạch tổng](plans/project-1-master-plan.md)
 - [Assignment Member 1](plans/member-1-assignment.md)
 - [Phase 1 contracts](docs/phase1-contracts.md)
-- [Milestone 1 integration status](docs/milestone1-integration-status.md)
-- [Member 1 full discovery evidence](docs/member1-discovery-run-2026-11-05.md)
 - [Đề bài](instructions/index.md)
