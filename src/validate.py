@@ -961,6 +961,7 @@ def compute_crawl_statistics(
     references_table: pa.Table,
     source_status_records: Optional[List[Dict[str, Any]]] = None,
     s2_attempted_count: Optional[int] = None,
+    s2_succeeded_count: Optional[int] = None,
     total_raw_references_count: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
@@ -976,14 +977,27 @@ def compute_crawl_statistics(
     success_papers = papers_table.num_rows
     paper_success_rate = round(success_papers / max(1, total_assigned), 4)
 
-    # Thống kê dung lượng từ source status của M2 (nếu có)
+    # Thống kê dung lượng theo publication: cộng mọi version của cùng paper trước,
+    # sau đó mới lấy trung bình để denominator đúng với yêu cầu "average paper size".
     avg_orig = 0.0
     avg_filt = 0.0
+    source_papers_measured = 0
     if source_status_records:
-        orig_bytes = [r.get("archive_bytes", 0) for r in source_status_records]
-        filt_bytes = [r.get("filtered_bytes", 0) for r in source_status_records]
-        avg_orig = sum(orig_bytes) / max(1, len(orig_bytes))
-        avg_filt = sum(filt_bytes) / max(1, len(filt_bytes))
+        per_paper: Dict[str, Dict[str, int]] = {}
+        for record in source_status_records:
+            arxiv_id = str(record.get("arxiv_id") or "").strip()
+            if not arxiv_id:
+                continue
+            download = record.get("download") or {}
+            extraction = record.get("extraction") or {}
+            archive_bytes = record.get("archive_bytes", download.get("archive_bytes", 0))
+            filtered_bytes = record.get("filtered_bytes", extraction.get("filtered_bytes", 0))
+            totals = per_paper.setdefault(arxiv_id, {"archive": 0, "filtered": 0})
+            totals["archive"] += int(archive_bytes or 0)
+            totals["filtered"] += int(filtered_bytes or 0)
+        source_papers_measured = len(per_paper)
+        avg_orig = sum(item["archive"] for item in per_paper.values()) / max(1, source_papers_measured)
+        avg_filt = sum(item["filtered"] for item in per_paper.values()) / max(1, source_papers_measured)
 
     reduction_rate = round((avg_orig - avg_filt) / max(1.0, avg_orig), 4) if avg_orig > 0 else 0.0
 
@@ -994,9 +1008,19 @@ def compute_crawl_statistics(
     raw_refs_count = total_raw_references_count if total_raw_references_count is not None else eligible_refs_count
     avg_all_refs = round(raw_refs_count / max(1, success_papers), 2)
 
-    s2_attempted = s2_attempted_count or success_papers
-    unique_citing_papers = len(set(references_table.column("arxiv_id").to_pylist())) if references_table.num_rows > 0 else 0
-    ref_success_rate = round(unique_citing_papers / max(1, s2_attempted), 4)
+    s2_attempted = s2_attempted_count if s2_attempted_count is not None else success_papers
+    if s2_succeeded_count is None:
+        # Backward-compatible fallback only. Callers with S2 statuses must pass the
+        # actual count of `ok` responses so papers with zero eligible references
+        # are not incorrectly classified as failures.
+        s2_succeeded = (
+            len(set(references_table.column("arxiv_id").to_pylist()))
+            if references_table.num_rows > 0
+            else 0
+        )
+    else:
+        s2_succeeded = s2_succeeded_count
+    ref_success_rate = round(s2_succeeded / max(1, s2_attempted), 4)
 
     return {
         "total_assigned": total_assigned,
@@ -1004,10 +1028,13 @@ def compute_crawl_statistics(
         "paper_success_rate": paper_success_rate,
         "avg_original_source_bytes": round(avg_orig, 2),
         "avg_filtered_source_bytes": round(avg_filt, 2),
+        "source_size_denominator_papers": source_papers_measured,
         "reduction_rate": reduction_rate,
         "avg_all_references_per_paper": avg_all_refs,
         "avg_eligible_arxiv_references_per_paper": avg_eligible_refs,
         "reference_metadata_success_rate": ref_success_rate,
+        "reference_metadata_success_numerator": s2_succeeded,
+        "reference_metadata_success_denominator": s2_attempted,
     }
 
 

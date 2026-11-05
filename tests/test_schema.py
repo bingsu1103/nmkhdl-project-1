@@ -345,22 +345,40 @@ def test_compute_crawl_statistics():
         papers_table=papers_table,
         references_table=refs_table,
         source_status_records=[
-            {"archive_bytes": 1000, "filtered_bytes": 300},
-            {"archive_bytes": 2000, "filtered_bytes": 700},
+            {
+                "arxiv_id": "2310.00001",
+                "download": {"archive_bytes": 1000},
+                "extraction": {"filtered_bytes": 300},
+            },
+            {
+                "arxiv_id": "2310.00001",
+                "download": {"archive_bytes": 500},
+                "extraction": {"filtered_bytes": 200},
+            },
+            {
+                "arxiv_id": "2310.00002",
+                "download": {"archive_bytes": 2000},
+                "extraction": {"filtered_bytes": 700},
+            },
         ],
         s2_attempted_count=2,
+        s2_succeeded_count=2,
         total_raw_references_count=6,  # 6 trích dẫn thô từ S2, trong đó có 2 bài hợp lệ
     )
 
     assert stats["total_assigned"] == 3
     assert stats["papers_scraped_successfully"] == 2
     assert stats["paper_success_rate"] == pytest.approx(2 / 3, abs=1e-3)
-    assert stats["avg_original_source_bytes"] == 1500.0
-    assert stats["avg_filtered_source_bytes"] == 500.0
-    assert stats["reduction_rate"] == pytest.approx(0.6667, abs=1e-3)
+    assert stats["avg_original_source_bytes"] == 1750.0
+    assert stats["avg_filtered_source_bytes"] == 600.0
+    assert stats["source_size_denominator_papers"] == 2
+    assert stats["reduction_rate"] == pytest.approx(0.6571, abs=1e-3)
     assert stats["avg_all_references_per_paper"] == 3.0  # 6 / 2 = 3.0
     assert stats["avg_eligible_arxiv_references_per_paper"] == 1.0  # 2 / 2 = 1.0
-    assert stats["reference_metadata_success_rate"] == 0.5  # 1 citing paper out of 2 attempted
+    # Paper 2 có thể có zero eligible arXiv reference nhưng S2 request vẫn thành công.
+    assert stats["reference_metadata_success_rate"] == 1.0
+    assert stats["reference_metadata_success_numerator"] == 2
+    assert stats["reference_metadata_success_denominator"] == 2
 
 
 def test_normalize_iso_date_datetime_and_offset():
