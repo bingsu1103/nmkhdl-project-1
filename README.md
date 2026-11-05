@@ -16,7 +16,7 @@ Member 1 đã hoàn tất contract foundation và phần feature implementation 
 - Atomic checkpoint, crash/resume và structured JSONL events.
 - CLI fixture offline và lệnh `discover` thật có filter `--member`, `--paper`, `--limit`.
 
-Milestone 1 toàn nhóm **chưa hoàn tất**: full discovery Member 1 đã đạt 5.000/5.000 và CLI Semantic Scholar của Member 3 đã được merge, nhưng chưa có downloader/safe extractor của Member 2 trên remote. Semantic Scholar smoke test hiện nhận HTTP 429 khi chạy anonymous; cần API key đặt local/Colab Secret hoặc runtime có quota để hoàn tất reference crawl. Các command chưa tích hợp vẫn trả exit code `3` để không tạo bằng chứng giả.
+Milestone 1 toàn nhóm **chưa hoàn tất**: full discovery Member 1 đã đạt 5.000/5.000; downloader/safe extractor của Member 2 và CLI Semantic Scholar của Member 3 đã được merge. Source pilot thật đạt 3/3 version và checksum-based resume đạt 3/3. Còn phải chạy đủ 7.858 source-version tasks, hoàn tất Semantic Scholar crawl (anonymous smoke test đang nhận HTTP 429), build/validate bảng và benchmark trước khi tuyên bố hoàn tất. Các command chưa tích hợp vẫn trả exit code `3` để không tạo bằng chứng giả.
 
 ## Cấu trúc
 
