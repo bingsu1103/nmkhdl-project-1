@@ -54,12 +54,14 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(len(output_path.read_text(encoding="utf-8").splitlines()), 5)
 
-    def test_future_command_fails_explicitly(self) -> None:
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            code = main(["crawl-sources"])
-        self.assertEqual(code, EXIT_NOT_IMPLEMENTED)
-        self.assertIn("intentionally not implemented", output.getvalue())
+    def test_future_commands_fail_explicitly(self) -> None:
+        for command in ("benchmark", "run-all"):
+            with self.subTest(command=command):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = main([command])
+                self.assertEqual(code, EXIT_NOT_IMPLEMENTED)
+                self.assertIn("intentionally not implemented", output.getvalue())
 
     def test_fixture_discovery_runs_end_to_end_without_network(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
