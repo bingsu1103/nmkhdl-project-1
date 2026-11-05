@@ -47,6 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
     boundary = validate.add_mutually_exclusive_group()
     boundary.add_argument("--inclusive-end", action="store_true")
     boundary.add_argument("--exclusive-end", action="store_true")
+    validate.add_argument(
+        "--month-ceiling",
+        action="append",
+        default=[],
+        metavar="YYYY-MM=NNNNN",
+        help="Explicit last valid ID for a non-final month in a cross-month range.",
+    )
     validate.set_defaults(handler=_validate_ranges)
 
     fixture = subparsers.add_parser(
@@ -116,9 +123,13 @@ def _validate_ranges(args: argparse.Namespace) -> int:
         inclusive_end = False
 
     if inclusive_end is not None:
+        monthly_id_ceilings = _parse_month_ceilings(args.month_ceiling)
         papers = expand_ranges(
             ranges,
-            convention=RangeConvention(inclusive_end=inclusive_end),
+            convention=RangeConvention(
+                inclusive_end=inclusive_end,
+                monthly_id_ceilings=monthly_id_ceilings,
+            ),
         )
         result.update(
             {
@@ -320,6 +331,22 @@ def _fixture_context(*paths: Path) -> str:
             raise RangeValidationError(f"Cannot checksum fixture input: {path}") from exc
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _parse_month_ceilings(values: list[str]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for value in values:
+        try:
+            month, raw_ceiling = value.split("=", 1)
+            ceiling = int(raw_ceiling)
+        except (ValueError, TypeError) as exc:
+            raise RangeValidationError(
+                f"Invalid --month-ceiling {value!r}; expected YYYY-MM=NNNNN"
+            ) from exc
+        if month in result:
+            raise RangeValidationError(f"Duplicate --month-ceiling for {month}")
+        result[month] = ceiling
+    return result
 
 
 if __name__ == "__main__":  # pragma: no cover

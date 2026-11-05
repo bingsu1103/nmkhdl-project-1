@@ -28,6 +28,32 @@ class CliTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertIn('"expanded": false', output.getvalue())
 
+    def test_expands_cross_month_range_with_explicit_ceiling(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ranges.csv"
+            path.write_text(
+                "member_id,start_month,start_id,end_month,end_id\n"
+                "member-1,2025-10,00003,2025-11,00002\n",
+                encoding="utf-8",
+            )
+            output_path = Path(directory) / "owned.csv"
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = main(
+                    [
+                        "validate-ranges",
+                        "--ranges-file",
+                        str(path),
+                        "--allow-partial",
+                        "--inclusive-end",
+                        "--month-ceiling",
+                        "2025-10=4",
+                        "--output",
+                        str(output_path),
+                    ]
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(len(output_path.read_text(encoding="utf-8").splitlines()), 5)
+
     def test_future_command_fails_explicitly(self) -> None:
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

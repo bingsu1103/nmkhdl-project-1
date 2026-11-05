@@ -74,6 +74,34 @@ class AssignedRangeTests(unittest.TestCase):
         with self.assertRaisesRegex(RangeValidationError, "Cross-month"):
             expand_ranges(rows, convention=RangeConvention(inclusive_end=True))
 
+    def test_expands_cross_month_with_explicit_ceiling(self) -> None:
+        rows = [AssignedRange("member-1", "2025-10", "00003", "2025-11", "00002")]
+        papers = expand_ranges(
+            rows,
+            convention=RangeConvention(
+                inclusive_end=True,
+                monthly_id_ceilings={"2025-10": 4},
+            ),
+        )
+        self.assertEqual(
+            [paper.arxiv_id for paper in papers],
+            ["2510.00003", "2510.00004", "2511.00001", "2511.00002"],
+        )
+
+    def test_rejects_cross_member_overlap_after_expansion(self) -> None:
+        rows = [
+            AssignedRange("member-1", "2025-10", "00003", "2025-11", "00002"),
+            AssignedRange("member-2", "2025-11", "00002", "2025-11", "00003"),
+        ]
+        with self.assertRaisesRegex(RangeValidationError, "overlap at 2511.00002"):
+            expand_ranges(
+                rows,
+                convention=RangeConvention(
+                    inclusive_end=True,
+                    monthly_id_ceilings={"2025-10": 4},
+                ),
+            )
+
     def test_checksums_are_deterministic(self) -> None:
         first = AssignedRange("member-1", "2025-09", "00001", "2025-09", "00002")
         second = AssignedRange("member-2", "2025-10", "00003", "2025-10", "00004")

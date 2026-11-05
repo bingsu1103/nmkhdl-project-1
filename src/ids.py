@@ -6,7 +6,7 @@ import csv
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -33,6 +33,7 @@ class RangeConvention:
 
     inclusive_end: bool | None = None
     id_width: int = 5
+    monthly_id_ceilings: dict[str, int] = field(default_factory=dict)
 
     def validate(self) -> None:
         if self.inclusive_end is None:
@@ -41,6 +42,13 @@ class RangeConvention:
             )
         if self.id_width <= 0:
             raise RangeValidationError("id_width must be a positive integer.")
+        maximum = 10**self.id_width - 1
+        for month, ceiling in self.monthly_id_ceilings.items():
+            _validate_month(month, field="monthly_id_ceilings", member="convention")
+            if not 1 <= ceiling <= maximum:
+                raise RangeValidationError(
+                    f"Monthly ID ceiling for {month} must be between 1 and {maximum}."
+                )
 
 
 def read_assigned_ranges(
@@ -116,35 +124,55 @@ def expand_ranges(
     *,
     convention: RangeConvention,
 ) -> list[OwnedPaper]:
-    """Expand same-month ranges after the lab's boundary rule is explicit.
-
-    Cross-month expansion is deliberately rejected until the lab specifies the
-    valid ID ceiling for each month. Failing is safer than inventing IDs.
-    """
+    """Expand ranges deterministically using explicit month ceilings."""
 
     convention.validate()
     validate_ranges(ranges, expected_member_ids=tuple(r.member_id for r in ranges))
 
     owned: list[OwnedPaper] = []
     for item in sorted(ranges, key=lambda value: value.member_id):
-        if item.start_month != item.end_month:
-            raise RangeValidationError(
-                f"Cross-month range for {item.member_id} needs a lab-approved "
-                "monthly ID ceiling before it can be expanded."
-            )
         if len(item.start_id) != convention.id_width or len(item.end_id) != convention.id_width:
             raise RangeValidationError(
                 f"{item.member_id} IDs must contain exactly {convention.id_width} digits."
             )
 
-        stop = int(item.end_id) + (1 if convention.inclusive_end else 0)
-        prefix = _arxiv_month_prefix(item.start_month)
-        for numeric_id in range(int(item.start_id), stop):
-            owned.append(
-                OwnedPaper(
-                    member_id=item.member_id,
-                    arxiv_id=f"{prefix}.{numeric_id:0{convention.id_width}d}",
+        months = _months_between(item.start_month, item.end_month)
+        for index, month in enumerate(months):
+            first_month = index == 0
+            last_month = index == len(months) - 1
+            start = int(item.start_id) if first_month else 1
+            if last_month:
+                stop = int(item.end_id) + (1 if convention.inclusive_end else 0)
+            else:
+                try:
+                    ceiling = convention.monthly_id_ceilings[month]
+                except KeyError as exc:
+                    raise RangeValidationError(
+                        f"Cross-month range for {item.member_id} needs an explicit "
+                        f"monthly ID ceiling for {month}."
+                    ) from exc
+                if ceiling < start:
+                    raise RangeValidationError(
+                        f"Monthly ID ceiling {ceiling} for {month} is below range start {start}."
+                    )
+                stop = ceiling + 1
+
+            prefix = _arxiv_month_prefix(month)
+            for numeric_id in range(start, stop):
+                owned.append(
+                    OwnedPaper(
+                        member_id=item.member_id,
+                        arxiv_id=f"{prefix}.{numeric_id:0{convention.id_width}d}",
+                    )
                 )
+
+    owners: dict[str, str] = {}
+    for paper in owned:
+        previous_owner = owners.setdefault(paper.arxiv_id, paper.member_id)
+        if previous_owner != paper.member_id:
+            raise RangeValidationError(
+                f"Expanded ranges overlap at {paper.arxiv_id}: "
+                f"{previous_owner} and {paper.member_id}."
             )
     return owned
 
@@ -206,3 +234,22 @@ def _arxiv_month_prefix(value: str) -> str:
     if match is None:  # Defensive; callers normally validate first.
         raise RangeValidationError(f"Invalid month: {value}")
     return f"{match.group('year')[-2:]}{match.group('month')}"
+
+
+def _months_between(start: str, end: str) -> list[str]:
+    start_match = MONTH_PATTERN.fullmatch(start)
+    end_match = MONTH_PATTERN.fullmatch(end)
+    if start_match is None or end_match is None:
+        raise RangeValidationError(f"Invalid month interval: {start}..{end}")
+    year = int(start_match.group("year"))
+    month = int(start_match.group("month"))
+    end_pair = (int(end_match.group("year")), int(end_match.group("month")))
+    result: list[str] = []
+    while (year, month) <= end_pair:
+        result.append(f"{year:04d}-{month:02d}")
+        if month == 12:
+            year += 1
+            month = 1
+        else:
+            month += 1
+    return result
