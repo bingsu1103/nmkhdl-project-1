@@ -16,7 +16,7 @@ Member 1 đã hoàn tất contract foundation và phần feature implementation 
 - Atomic checkpoint, crash/resume và structured JSONL events.
 - CLI fixture offline và lệnh `discover` thật có filter `--member`, `--paper`, `--limit`.
 
-Milestone 1 toàn nhóm **chưa hoàn tất**: full discovery Member 1 đã đạt 5.000/5.000; downloader/safe extractor của Member 2 và CLI Semantic Scholar của Member 3 đã được merge. Source pilot thật đạt 3/3 version và checksum-based resume đạt 3/3. Còn phải chạy đủ 7.858 source-version tasks, hoàn tất Semantic Scholar crawl (anonymous smoke test đang nhận HTTP 429), build/validate bảng và benchmark trước khi tuyên bố hoàn tất. Các command chưa tích hợp vẫn trả exit code `3` để không tạo bằng chứng giả.
+Milestone 1 toàn nhóm **chưa hoàn tất trên dữ liệu thật**: full discovery Member 1 đã đạt 5.000/5.000; downloader/safe extractor của Member 2 và CLI Semantic Scholar của Member 3 đã được merge. Source pilot thật đạt 3/3 version và checksum-based resume đạt 3/3. Source-completeness gate, `run-all` và benchmark/metrics đã có code và test offline, nhưng nhóm vẫn phải chạy đủ 7.858 source-version tasks, hoàn tất Semantic Scholar crawl (anonymous smoke test đang nhận HTTP 429), rồi lưu artifact validation/benchmark thật trước khi tuyên bố hoàn tất.
 
 ## Cấu trúc
 
@@ -105,6 +105,19 @@ Output chính:
 
 Không đổi `retryable_failure` thành success thủ công. Runtime summary, checksums và corpus thật được giữ ngoài Git; Jupyter Book đọc các artifact máy sinh thay vì dựa vào nhật ký Markdown thủ công.
 
+## Source crawl và completeness gate M1
+
+Tiếp tục tải/extract toàn bộ version của Member 1 từ manifest discovery đã có:
+
+```bash
+python -m src.cli crawl-sources \
+  --data-dir ../nmkhdl-project-1-data \
+  --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" \
+  --member member-1
+```
+
+Lệnh ghi checkpoint terminal theo từng version vào `manifests/source_status.jsonl`; chạy lại sẽ resume mặc định. Cổng validation chỉ qua khi mọi `versioned_arxiv_id` trong `version_tasks.csv` có đúng một terminal status, không thiếu, không dư và không trùng.
+
 ## References, tables và validation M1
 
 Semantic Scholar key là tùy chọn nhưng anonymous endpoint có thể trả HTTP 429. Nếu có key, tự đặt trong shell/Colab Secret; không gửi hoặc commit key:
@@ -130,6 +143,37 @@ python -m src.cli validate \
 ```
 
 `build-tables` sẽ fail nếu S2 còn thiếu, unexpected hoặc non-terminal status; không tạo bảng thiếu dữ liệu để vượt validation giả.
+
+## Chạy toàn bộ M1 và benchmark
+
+`run-all` nối discovery → source crawl → Semantic Scholar → hai bảng Parquet → validation → metrics. Dùng `--resume` cho runtime thật dài hoặc bị gián đoạn:
+
+```bash
+python -m src.cli run-all \
+  --owned-papers local/expanded_ids.csv \
+  --data-dir ../nmkhdl-project-1-data \
+  --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" \
+  --member member-1 \
+  --resume
+```
+
+Release gate chỉ trả exit code `0` khi discovery, source completeness, Semantic Scholar terminal statuses, schema/FK/reconciliation và validation đều qua. Kết quả máy sinh nằm ở:
+
+```text
+<data-dir>/manifests/m1_run_summary.json
+<data-dir>/tables/m1_validation_report.json
+<data-dir>/metrics/summary.json
+```
+
+Benchmark chính thức phải dùng một `data-dir` sạch và không dùng `--resume`, để thời gian/RAM/disk không bị trộn với cache của run cũ:
+
+```bash
+python -m src.cli benchmark \
+  --owned-papers local/expanded_ids.csv \
+  --data-dir ../nmkhdl-project-1-benchmark \
+  --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" \
+  --member member-1
+```
 
 ## Chạy fixture end-to-end Phase 1
 
@@ -165,7 +209,6 @@ Event resumed có `"resumed": true`. Nếu bytes của một trong hai input tha
 |---:|---|
 | `0` | Lệnh hoàn tất và mọi selected paper success |
 | `2` | Config/input validation error (`argparse` kết thúc) |
-| `3` | Command thuộc phase sau, chưa được triển khai |
 | `4` | Run có ít nhất một paper không success |
 
 ## Quy tắc Git
