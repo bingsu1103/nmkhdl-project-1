@@ -1,4 +1,4 @@
-# MEMBER 2 – TẢI MÃ NGUỒN, GIẢI NÉN AN TOÀN VÀ PHÂN TÍCH CẤU TRÚC LATEX
+# MEMBER 2 – Khánh An – TẢI MÃ NGUỒN, GIẢI NÉN AN TOÀN VÀ PHÂN TÍCH CẤU TRÚC LATEX
 
 ## 1. Tổng quan
 
@@ -26,7 +26,7 @@ Mục tiêu là chuyển đổi dữ liệu mã nguồn thô từ arXiv thành d
 
 ## 2. Quy trình xử lý tổng thể
 
-Quy trình của Member 2 gồm ba giai đoạn chính:
+Gồm ba giai đoạn chính:
 
 ```text
 Manifest danh sách phiên bản bài báo
@@ -223,7 +223,7 @@ Nếu dự án sử dụng thêm các thư viện phục vụ phân tích LaTeX 
 
 ---
 
-## 6. Hướng dẫn thực thi Member 2
+## 6. Hướng dẫn thực thi
 
 Các lệnh dưới đây mô tả quy trình dự kiến. Trước khi thực thi, cần kiểm tra `python -m src.cli --help` và hướng dẫn của từng subcommand để xác nhận các tham số thực tế.
 
@@ -246,7 +246,7 @@ python -m src.cli discover `
     --resume
 ```
 
-**Lưu ý quan trọng:** Tệp `examples/phase1/owned_papers.csv` có thể chỉ chứa dữ liệu mẫu được phân công cho các thành viên khác. Khi xử lý dữ liệu thực tế, cần sử dụng manifest chứa đúng danh sách bài báo của Member 2.
+**Lưu ý quan trọng:** Tệp `examples/phase1/owned_papers.csv` có thể chỉ chứa dữ liệu mẫu được phân công cho các thành viên khác. Khi xử lý dữ liệu thực tế, cần sử dụng manifest chứa đúng danh sách bài báo.
 
 ### Bước 2: Tải và giải nén mã nguồn
 
@@ -273,7 +273,7 @@ Sau đó sử dụng đúng các tham số được CLI cung cấp để chạy 
 
 ## 7. Kiểm thử
 
-Các thành phần của Member 2 cần được kiểm thử độc lập trước khi tích hợp vào hệ thống tổng thể.
+Các thành phần cần được kiểm thử độc lập trước khi tích hợp vào hệ thống tổng thể.
 
 ### 7.1. Các nhóm kiểm thử
 
@@ -367,7 +367,7 @@ Member 5: Book / Poster Processing
 
 Các giao diện và cấu trúc dữ liệu đầu ra cần được thống nhất với các thành viên khác trước khi tích hợp chính thức.
 
-Member 2 cần đảm bảo:
+Điều kiện cần đảm bảo:
 
 - Giữ nguyên mã định danh bài báo và phiên bản.
 - Theo dõi được trạng thái xử lý từng tác vụ.
@@ -393,7 +393,7 @@ Tất cả đường dẫn bên trong tệp nén cần được kiểm tra trư�
 
 ---
 
-## 11. Checklist hoàn thành Member 2
+## 11. Checklist hoàn thành
 
 - [ ] Tìm hiểu cấu trúc manifest từ Member 1.
 - [ ] Xây dựng chức năng tải mã nguồn.
@@ -419,7 +419,7 @@ Tất cả đường dẫn bên trong tệp nén cần được kiểm tra trư�
 
 | Thuộc tính | Thông tin |
 |---|---|
-| Thành viên | Member 2 |
+| Thành viên | Member 2 - Khánh An - |
 | Nhánh Git | `member-2/source-parsing` |
 | Phạm vi phụ trách | Tải mã nguồn, giải nén an toàn và phân tích LaTeX phân cấp |
 | Repository | https://github.com/bingsu1103/nmkhdl-project-1 |
