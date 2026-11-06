@@ -61,6 +61,34 @@ def write_tasks(path: Path) -> None:
         )
 
 
+def write_two_member_one_tasks(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=(
+                "member_id",
+                "arxiv_id",
+                "versioned_arxiv_id",
+                "version",
+                "status",
+                "run_id",
+            ),
+        )
+        writer.writeheader()
+        for version in (1, 2):
+            writer.writerow(
+                {
+                    "member_id": "member-1",
+                    "arxiv_id": "2509.16047",
+                    "versioned_arxiv_id": f"2509.16047v{version}",
+                    "version": str(version),
+                    "status": "pending",
+                    "run_id": "discovery-run",
+                }
+            )
+
+
 def test_filters_member_and_writes_terminal_handoff(tmp_path: Path) -> None:
     tasks = tmp_path / "version_tasks.csv"
     write_tasks(tasks)
@@ -175,3 +203,97 @@ def test_rejects_manifest_without_version_contract(tmp_path: Path) -> None:
             data_dir=tmp_path / "data",
             user_agent="group-18-test",
         )
+
+
+def test_missing_only_skips_every_existing_status_record(tmp_path: Path) -> None:
+    tasks = tmp_path / "version_tasks.csv"
+    write_two_member_one_tasks(tasks)
+    data = tmp_path / "data"
+    manifest = data / "manifests" / "source_status.jsonl"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "member_id": "member-1",
+                "arxiv_id": "2509.16047",
+                "versioned_arxiv_id": "2509.16047v1",
+                "version": 1,
+                "status": "retry_exhausted",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    downloader = mock.Mock()
+    downloader.download.return_value = FakeDownload(
+        "success", str(tmp_path / "source.archive")
+    )
+    extractor = mock.Mock()
+    extractor.extract.return_value = FakeExtraction("success")
+
+    with mock.patch("src.source_pipeline.ArxivSourceDownloader", return_value=downloader):
+        with mock.patch("src.source_pipeline.SafeSourceExtractor", return_value=extractor):
+            summary = run_source_pipeline(
+                version_tasks_csv=tasks,
+                data_dir=data,
+                user_agent="group-18-test",
+                member_id="member-1",
+                missing_only=True,
+            )
+
+    assert summary["selection_mode"] == "missing_only"
+    assert summary["candidate_version_tasks"] == 2
+    assert summary["expected_version_tasks"] == 1
+    assert summary["skipped_version_tasks"] == 1
+    downloader.download.assert_called_once_with("2509.16047", "2509.16047v2", resume=True)
+    rows = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
+    assert [row["versioned_arxiv_id"] for row in rows] == [
+        "2509.16047v1",
+        "2509.16047v2",
+    ]
+
+
+def test_retry_failures_only_skips_success_and_missing_tasks(tmp_path: Path) -> None:
+    tasks = tmp_path / "version_tasks.csv"
+    write_two_member_one_tasks(tasks)
+    data = tmp_path / "data"
+    manifest = data / "manifests" / "source_status.jsonl"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "member_id": "member-1",
+                "arxiv_id": "2509.16047",
+                "versioned_arxiv_id": "2509.16047v1",
+                "version": 1,
+                "status": "retry_exhausted",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    downloader = mock.Mock()
+    downloader.download.return_value = FakeDownload(
+        "success", str(tmp_path / "source.archive")
+    )
+    extractor = mock.Mock()
+    extractor.extract.return_value = FakeExtraction("success")
+
+    with mock.patch("src.source_pipeline.ArxivSourceDownloader", return_value=downloader):
+        with mock.patch("src.source_pipeline.SafeSourceExtractor", return_value=extractor):
+            summary = run_source_pipeline(
+                version_tasks_csv=tasks,
+                data_dir=data,
+                user_agent="group-18-test",
+                member_id="member-1",
+                retry_failures_only=True,
+            )
+
+    assert summary["selection_mode"] == "retry_failures_only"
+    assert summary["candidate_version_tasks"] == 2
+    assert summary["expected_version_tasks"] == 1
+    assert summary["skipped_version_tasks"] == 1
+    downloader.download.assert_called_once_with("2509.16047", "2509.16047v1", resume=True)
+    rows = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "success"

@@ -25,8 +25,12 @@ def run_source_pipeline(
     timeout: tuple[float, float] = (10.0, 60.0),
     max_attempts: int = 4,
     resume: bool = True,
+    missing_only: bool = False,
+    retry_failures_only: bool = False,
 ) -> dict[str, Any]:
     """Download/extract all selected version tasks; always emit one status per task."""
+    if missing_only and retry_failures_only:
+        raise ValueError("missing_only and retry_failures_only are mutually exclusive")
     tasks_path, root = Path(version_tasks_csv), Path(data_dir)
     if not tasks_path.is_file():
         raise FileNotFoundError(f"Missing version task manifest: {tasks_path}")
@@ -42,12 +46,33 @@ def run_source_pipeline(
             if paper_ids and row["arxiv_id"] not in paper_ids:
                 continue
             tasks.append(row)
+    if not tasks:
+        raise ValueError("No version tasks remain after applying filters.")
+
+    manifest = root / "manifests" / "source_status.jsonl"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    persisted = _load_status_manifest(manifest)
+    candidate_task_count = len(tasks)
+    if missing_only:
+        tasks = [
+            task for task in tasks
+            if task["versioned_arxiv_id"] not in persisted
+        ]
+        selection_mode = "missing_only"
+    elif retry_failures_only:
+        tasks = [
+            task for task in tasks
+            if task["versioned_arxiv_id"] in persisted
+            and persisted[task["versioned_arxiv_id"]].get("status")
+            not in {"success", "no_tex_bib"}
+        ]
+        selection_mode = "retry_failures_only"
+    else:
+        selection_mode = "all"
     if limit is not None:
         if limit <= 0:
             raise ValueError("limit must be positive")
         tasks = tasks[:limit]
-    if not tasks:
-        raise ValueError("No version tasks remain after applying filters.")
 
     raw_dir = root / "raw" / "arxiv_sources"
     extracted_dir = root / "corpus" / "tex"
@@ -57,9 +82,6 @@ def run_source_pipeline(
     )
     extractor = SafeSourceExtractor(output_dir=extracted_dir)
     run_id = str(uuid4())
-    manifest = root / "manifests" / "source_status.jsonl"
-    manifest.parent.mkdir(parents=True, exist_ok=True)
-    persisted = _load_status_manifest(manifest)
     statuses: list[dict[str, Any]] = []
     for task in tasks:
         arxiv_id, versioned_id = task["arxiv_id"], task["versioned_arxiv_id"]
@@ -99,6 +121,9 @@ def run_source_pipeline(
         counts[row["status"]] = counts.get(row["status"], 0) + 1
     summary = {
         "run_id": run_id, "expected_version_tasks": len(tasks),
+        "candidate_version_tasks": candidate_task_count,
+        "skipped_version_tasks": candidate_task_count - len(tasks),
+        "selection_mode": selection_mode,
         "terminal_status_records": len(statuses), "status_counts": dict(sorted(counts.items())),
         "manifest_status_records": len(persisted),
         "source_status_manifest": str(manifest),

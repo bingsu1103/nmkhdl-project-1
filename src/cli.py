@@ -116,6 +116,17 @@ def build_parser() -> argparse.ArgumentParser:
     sources.add_argument("--read-timeout", type=float, default=60.0)
     sources.add_argument("--max-attempts", type=int, default=4)
     sources.add_argument("--no-resume", action="store_true")
+    source_selection = sources.add_mutually_exclusive_group()
+    source_selection.add_argument(
+        "--missing-only",
+        action="store_true",
+        help="Process only version tasks without an existing source status record.",
+    )
+    source_selection.add_argument(
+        "--retry-failures-only",
+        action="store_true",
+        help="Retry only existing source statuses other than success/no_tex_bib.",
+    )
     sources.set_defaults(handler=_crawl_sources)
 
     parse_sources = subparsers.add_parser(
@@ -372,6 +383,8 @@ def _crawl_sources(args: argparse.Namespace) -> int:
         timeout=(args.connect_timeout, args.read_timeout),
         max_attempts=args.max_attempts,
         resume=not args.no_resume,
+        missing_only=args.missing_only,
+        retry_failures_only=args.retry_failures_only,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
     failed = sum(
