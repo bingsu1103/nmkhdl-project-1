@@ -1,7 +1,7 @@
 # Introduction to Data Science — arXiv Project
 
 Repository mã nguồn chung của nhóm 18 cho đồ án arXiv môn Nhập môn Khoa học Dữ liệu. Đồ án gồm Milestone 1 Crawling, Milestone 2 Parsing/Standardization và Milestone 3 Matching.
-
+> **🌐 Xem Jupyter Book Report Online tại đây:** [https://ppakhang.github.io/nmkhdl-project-1-report/](https://ppakhang.github.io/nmkhdl-project-1-report/)
 Workspace này là **code repository của toàn đồ án**. Jupyter Book/GitHub Pages là deliverable riêng; đại diện nhóm sẽ nộp URL Pages công khai chứa nội dung M1 + M2.
 
 ## Trạng thái hiện tại
