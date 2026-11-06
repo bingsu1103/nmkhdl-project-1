@@ -79,24 +79,17 @@ Thông tin đã xác nhận: MSSV `20120359`, nhóm `18`, GitHub `ducquang2`, as
 - Ghi limitation: recent paper indexing delay, non-English/unconventional docs, version differences, API coverage.
 - Không sửa số liệu do S2 thiếu; report failure trung thực và retry evidence.
 
-### MS1-M3-T08 — Chạy và nghiệm thu range cá nhân
+### MS1-M3-T08 — Review Semantic Scholar crawl của full-group run
 
-Ngoài việc sở hữu Semantic Scholar client chung, Nguyễn Đức Quang phải tự chạy hoặc trực tiếp nghiệm thu toàn bộ M1 cho đúng 5.000 paper thuộc `member-3`.
+Theo quyết định vận hành ngày 06/11/2026, Member 1 chạy union 25.000 IDs; Nguyễn Đức Quang không phải chạy trùng crawler riêng cho `member-3` nếu group artifacts đã đủ coverage.
 
-```bash
-python -m src.cli discover --owned-papers local/expanded_ids.csv --data-dir ../nmkhdl-project-1-data-member-3 --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" --member member-3 --resume
-python -m src.cli crawl-sources --data-dir ../nmkhdl-project-1-data-member-3 --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" --member member-3
-python -m src.cli crawl-references --owned-papers local/expanded_ids.csv --data-dir ../nmkhdl-project-1-data-member-3 --member member-3
-```
+- Review S2 request fields, key/rate policy, retries, cache và terminal statuses của full-group run.
+- Đối chiếu mọi assigned publication, đặc biệt range `member-3`, với một S2 status duy nhất.
+- Xác nhận raw count, eligible arXiv references, dedup count, `publicationDate` mapping và failure taxonomy.
+- Ký xác nhận reference metrics/limitations trước khi M4 tổng hợp và M5 đưa vào Book.
+- Không sửa số liệu do S2 thiếu; giữ `not_found`, rate-limit và lỗi vĩnh viễn trong denominator.
 
-- Dùng data directory riêng như trên; không dùng chung manifest đang được member khác ghi.
-- Chỉ dùng `expanded_ids.csv` đã xác minh checksum nhóm; không tự sửa range để né lỗi.
-- API key phải là key riêng, chỉ đặt trong environment/Colab Secret; không chia sẻ và không commit.
-- Discovery phải có status cho đủ 5.000 paper; mọi expected version phải có source terminal status; S2 phải có terminal status cho đủ scope.
-- Retry lỗi tạm thời; giữ `no_source`, `no_tex_bib`, `not_found` và lỗi vĩnh viễn trong denominator thay vì xóa.
-- Bàn giao manifest, summary, checksums, run ID và failure list cho M1/M4/M5; corpus thật không được commit vào Git.
-
-**Acceptance:** range `member-3` không còn pending/unknown; expected versions reconcile với source statuses; `papers`/`references` của range pass schema, FK và uniqueness gates hoặc có failure list trung thực.
+**Acceptance:** full-group S2 manifest reconcile; range `member-3` có coverage report; reference claims/metrics trong Book được Member 3 sign off.
 
 ## 5. Interface bàn giao
 

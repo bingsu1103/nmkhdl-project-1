@@ -97,9 +97,9 @@ Phạm vi chính: nhận assigned IDs, chuẩn hóa/validate, gọi arXiv API đ
 - Merge theo dependency: contracts -> M2/M3 -> M4 -> orchestration -> report evidence.
 - Không merge PR chỉ vì “chạy trên máy em”; phải có reproducible command/output.
 
-### MS1-M1-T08 — Chạy và nghiệm thu range cá nhân
+### MS1-M1-T08 — Hoàn tất shard Member 1 và vận hành full-group crawl
 
-Ngoài module chung, Ngô Gia An phải tự chạy hoặc trực tiếp nghiệm thu toàn bộ M1 cho đúng 5.000 paper thuộc `member-1`; không được hiểu vai trò integrator là miễn trách nhiệm dữ liệu cá nhân.
+Ngô Gia An hoàn tất/reconcile shard 5.000 paper thuộc `member-1`, sau đó là operator của full-group run cho union 25.000 assigned IDs. Quyết định này bám Q&A giảng viên: nhóm được phép tổng hợp ID rồi chạy chung để tiết kiệm tài nguyên; không bắt buộc năm crawler cá nhân.
 
 ```bash
 python -m src.cli discover --owned-papers local/expanded_ids.csv --data-dir ../nmkhdl-project-1-data-member-1 --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" --member member-1 --resume
@@ -107,14 +107,24 @@ python -m src.cli crawl-sources --data-dir ../nmkhdl-project-1-data-member-1 --u
 python -m src.cli crawl-references --owned-papers local/expanded_ids.csv --data-dir ../nmkhdl-project-1-data-member-1 --member member-1
 ```
 
-- Dùng data directory riêng như trên; không dùng chung manifest đang được member khác ghi.
+Sau khi shard Member 1 đã dừng ghi và được validation, chạy full-group tuần tự trên data directory riêng:
+
+```bash
+python -m src.cli discover --owned-papers local/expanded_ids.csv --data-dir ../nmkhdl-project-1-data-group --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" --resume
+python -m src.cli crawl-sources --data-dir ../nmkhdl-project-1-data-group --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)"
+python -m src.cli crawl-references --owned-papers local/expanded_ids.csv --data-dir ../nmkhdl-project-1-data-group
+```
+
+- Không truyền `--member` trong full-group run; scope phải đủ union 25.000 IDs.
+- Không chạy hai process ghi cùng data directory đồng thời.
+- Trước khi tái sử dụng shard Member 1 trong group data-dir, phải có merge/seed utility kiểm tra key `member_id + versioned_arxiv_id`, checksum, duplicate và reconciliation. Nếu utility chưa có thì không copy đè manifest thủ công.
 - Chỉ dùng `expanded_ids.csv` đã xác minh checksum nhóm; không tự sửa range để né lỗi.
 - Semantic Scholar key, nếu có, chỉ đặt trong environment/Colab Secret; không gửi cho thành viên khác và không commit.
-- Discovery phải có status cho đủ 5.000 paper; mọi expected version phải có source terminal status; S2 phải có terminal status cho đủ scope.
+- Discovery phải có status cho đủ 25.000 paper; mọi expected version phải có source terminal status; S2 phải có terminal status cho đủ group scope.
 - Retry lỗi tạm thời; giữ `no_source`, `no_tex_bib`, `not_found` và lỗi vĩnh viễn trong denominator thay vì xóa.
 - Bàn giao manifest, summary, checksums, run ID và failure list cho M4/M5; corpus thật không được commit vào Git.
 
-**Acceptance:** range `member-1` không còn pending/unknown; expected versions reconcile với source statuses; `papers`/`references` của range pass schema, FK và uniqueness gates hoặc có failure list trung thực.
+**Acceptance:** shard Member 1 được bảo toàn; union 25.000 IDs không thiếu/trùng; mọi range có coverage report; expected versions reconcile với source statuses; group `papers`/`references` pass schema, FK và uniqueness gates hoặc có failure list trung thực.
 
 ## 5. Phối hợp
 

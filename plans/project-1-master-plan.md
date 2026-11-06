@@ -2,7 +2,7 @@
 
 > Phạm vi: toàn bộ đồ án Nhập môn Khoa học Dữ liệu, dựa trên `instructions/index.md`, `instructions/crawling.md`, `instructions/parsing.md`, `instructions/matching.md` và thông tin các cổng nộp Moodle do sinh viên cung cấp.
 >
-> Trạng thái ngày 05/11/2026: đã nhận và expand đủ năm range thành 25.000 candidate IDs; full discovery Member 1 đã đạt 5.000/5.000 metadata success và sinh 7.858 version tasks. Milestone 1 toàn nhóm vẫn chờ downloader/safe extractor của Member 2 và full integration.
+> Trạng thái ngày 06/11/2026: đã nhận và expand đủ năm range thành 25.000 candidate IDs; full discovery Member 1 đã đạt 5.000/5.000 metadata success và sinh 7.858 version tasks. Theo Q&A của giảng viên, nhóm được phép gộp toàn bộ assigned IDs và chạy chung. Nhóm chốt Member 1 vận hành full-group crawl 25.000 IDs sau khi hoàn tất/reconcile shard Member 1; Member 2–4 chịu trách nhiệm review module và quality gates, Member 5 dùng artifact nhóm để viết Book.
 
 ## 0. Xác định đúng phạm vi đồ án
 
@@ -336,9 +336,19 @@ Quy tắc:
 Mỗi người đồng thời có:
 
 1. **Functional ownership:** module chung được giao trong mục 7 và file assignment cá nhân.
-2. **Personal-range ownership:** chịu trách nhiệm theo dõi phần publications thuộc bốn trường range của mình qua cả M1, M2, M3 và upload một Hugging Face dataset cá nhân.
+2. **Personal-range accountability:** chịu trách nhiệm xác nhận phần publications thuộc bốn trường range của mình có mặt đầy đủ trong output nhóm qua cả M1, M2, M3 và upload một Hugging Face dataset cá nhân. Điều này không đồng nghĩa mỗi người phải chạy một crawler riêng.
 
-Không chia dữ liệu theo module. Ví dụ Member 2 viết parser chung nhưng vẫn phải kiểm tra đủ crawling/parsing/matching output cho range cá nhân; Member 4 viết model chung nhưng không sở hữu dữ liệu của Member 2. `member_id` chỉ nằm ở manifest/provenance và bước partition export, không tự ý thêm vào sáu published schemas nếu đề không quy định.
+### Quyết định vận hành M1 ngày 06/11/2026
+
+- Member 1 hoàn tất shard `member-1`, sau đó vận hành crawl chung từ manifest union 25.000 IDs cho cả năm range.
+- Không yêu cầu Member 2–5 chạy lại 5.000 IDs riêng nếu full-group run đã có coverage/status hợp lệ cho range của họ.
+- Member 2 review source downloader/extractor, payload/failure classes và size metrics trên full-group artifacts.
+- Member 3 review Semantic Scholar crawl, raw/eligible counts, retry/rate-limit và reference mapping trên full-group artifacts.
+- Member 4 chạy reconciliation/schema/metrics và benchmark Colab CPU-only trên toàn bộ assigned data.
+- Member 5 chỉ dùng artifact đo thật đã được owner sign off để tạo bảng/figure trong Jupyter Book.
+- Không chạy nhiều process ghi cùng manifest đồng thời. Shard Member 1 chỉ được nhập vào group data-dir bằng merge/seed utility có dedup và reconciliation; không copy đè JSONL/CSV thủ công.
+
+Không chia ownership dữ liệu theo module. Ví dụ Member 2 viết parser chung nhưng vẫn phải review crawling/parsing output liên quan module của mình; Member 4 viết model/validator chung nhưng không được tự sửa dữ liệu để làm metrics đẹp hơn. `member_id` chỉ nằm ở manifest/provenance và bước partition export, không tự ý thêm vào sáu published schemas nếu đề không quy định.
 
 Checklist bắt buộc cho **từng** member range:
 
