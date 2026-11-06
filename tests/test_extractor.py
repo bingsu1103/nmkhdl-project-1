@@ -70,3 +70,16 @@ def test_no_tex_bib_is_terminal_empty_record(tmp_path):
     )
     assert result.status == "no_tex_bib"
     assert result.files == ()
+
+
+def test_pdf_only_source_is_terminal_empty_record(tmp_path):
+    archive = tmp_path / "source.pdf"
+    archive.write_bytes(b"%PDF-1.7\nsynthetic PDF-only submission\n")
+
+    result = SafeSourceExtractor(output_dir=tmp_path / "out").extract(
+        archive, arxiv_id="2509.16068", versioned_arxiv_id="2509.16068v1"
+    )
+
+    assert result.status == "no_tex_bib"
+    assert result.files == ()
+    assert result.error_code is None

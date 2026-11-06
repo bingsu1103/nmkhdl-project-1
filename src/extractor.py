@@ -141,6 +141,11 @@ class SafeSourceExtractor:
     def _read_members(self, archive: Path) -> list[tuple[str, bytes]]:
         with archive.open("rb") as handle:
             magic = handle.read(4)
+        if magic == b"%PDF":
+            # arXiv may serve a PDF-only submission from the source endpoint.
+            # The project contract keeps an explicit empty source record instead
+            # of treating the publication as a corrupt archive.
+            return []
         if magic.startswith(b"\x1f\x8b"):
             try:
                 with tarfile.open(archive, mode="r:gz") as tar:
