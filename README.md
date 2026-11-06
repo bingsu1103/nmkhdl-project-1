@@ -118,6 +118,28 @@ python -m src.cli crawl-sources \
 
 Lệnh ghi checkpoint terminal theo từng version vào `manifests/source_status.jsonl`; chạy lại sẽ resume mặc định. Cổng validation chỉ qua khi mọi `versioned_arxiv_id` trong `version_tasks.csv` có đúng một terminal status, không thiếu, không dư và không trùng.
 
+Nếu một run dài bị dừng sau khi đã có nhiều status, ưu tiên hoàn thành phần chưa từng xử lý trước mà không duyệt lại cache cũ:
+
+```bash
+python -m src.cli crawl-sources \
+  --data-dir ../nmkhdl-project-1-data \
+  --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" \
+  --member member-1 \
+  --missing-only
+```
+
+Sau khi không còn version thiếu, retry riêng các status lỗi; `success` và `no_tex_bib` được bỏ qua:
+
+```bash
+python -m src.cli crawl-sources \
+  --data-dir ../nmkhdl-project-1-data \
+  --user-agent "group-18-nmkhdl-project/0.2 (+https://github.com/bingsu1103/nmkhdl-project-1)" \
+  --member member-1 \
+  --retry-failures-only
+```
+
+Hai chế độ trên không được chạy đồng thời và không được chạy hai process trên cùng `data-dir`. Source endpoint trả PDF-only được ghi nhận là `no_tex_bib`, đúng hợp đồng empty record thay vì lỗi archive.
+
 ## References, tables và validation M1
 
 Semantic Scholar key là tùy chọn nhưng anonymous endpoint có thể trả HTTP 429. Nếu có key, tự đặt trong shell/Colab Secret; không gửi hoặc commit key:
