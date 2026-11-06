@@ -11,3 +11,12 @@ chapters:
       - file: milestone-1/data-validation
       - file: milestone-1/performance
       - file: milestone-1/limitations
+
+  - file: milestone-2/index
+    sections:
+      - file: milestone-2/hierarchical-parsing
+      - file: milestone-2/standardization
+      - file: milestone-2/dataset-structure
+      - file: milestone-2/statistics
+      - file: milestone-2/performance
+      - file: milestone-2/discussion
