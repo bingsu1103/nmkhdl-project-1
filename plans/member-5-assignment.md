@@ -104,17 +104,18 @@ Mọi claim kỹ thuật phải trùng code đã merge; chưa chạy thì dùng 
 - Cùng M1 review Moodle fields; submit đúng hai links của M1, không dataset.
 - Lưu nội bộ timestamp/receipt; không commit thông tin cá nhân nhạy cảm.
 
-### MS1-M5-T09 — Nhận và trình bày full-group evidence
+### MS1-M5-T09 — Crawl shard Member 5 và trình bày full-group evidence
 
-Theo quyết định vận hành ngày 06/11/2026, Member 1 chạy union 25.000 IDs; Phạm Phúc An Khang không phải chạy trùng crawler riêng cho `member-5` nếu group artifacts đã đủ coverage.
+Theo quyết định vận hành ngày 11/11/2026, Phạm Phúc An Khang tự chạy discovery, source crawl và Semantic Scholar cho đúng 5.000 IDs của `member-5`, đồng thời tiếp tục sở hữu Book/Pages.
 
+- Bàn giao shard `member-5` đúng handoff contract; giữ raw/corpus trên máy/Drive.
 - Dựng Book/Pages ngay, không chờ runtime artifacts; mọi số liệu chưa có phải để TODO rõ ràng.
 - Chỉ nhận group metrics sau sign-off của M2/M3/M4; không suy số từ riêng shard Member 1 rồi gọi là kết quả toàn nhóm.
 - Sinh bảng/figure từ structured artifacts, có denominator 25.000 và breakdown failure/coverage phù hợp.
 - Xác nhận range `member-5` xuất hiện trong coverage report, nhưng không tự sửa corpus hoặc metrics.
 - Giữ Book URL ổn định và cập nhật kết quả thật trước final deadline theo thông báo giảng viên.
 
-**Acceptance:** Pages public/build sạch; chưa có artifact thì report trung thực là pending; khi full-group artifacts sẵn sàng, mọi claim/figure/table trace được tới summary, run ID và commit SHA.
+**Acceptance:** shard `member-5` có terminal status/artifact đầy đủ; Pages public/build sạch; chưa có artifact thì report trung thực là pending; khi full-group artifacts sẵn sàng, mọi claim/figure/table trace được tới summary, run ID và commit SHA.
 
 ## 5. Input cần từ từng member
 

@@ -79,17 +79,18 @@ Thông tin đã xác nhận: MSSV `20120359`, nhóm `18`, GitHub `ducquang2`, as
 - Ghi limitation: recent paper indexing delay, non-English/unconventional docs, version differences, API coverage.
 - Không sửa số liệu do S2 thiếu; report failure trung thực và retry evidence.
 
-### MS1-M3-T08 — Review Semantic Scholar crawl của full-group run
+### MS1-M3-T08 — Crawl shard Member 3 và review Semantic Scholar toàn nhóm
 
-Theo quyết định vận hành ngày 06/11/2026, Member 1 chạy union 25.000 IDs; Nguyễn Đức Quang không phải chạy trùng crawler riêng cho `member-3` nếu group artifacts đã đủ coverage.
+Theo quyết định vận hành ngày 11/11/2026, Nguyễn Đức Quang tự chạy discovery, source crawl và Semantic Scholar cho đúng 5.000 IDs của `member-3` theo README, trong data directory riêng ngoài Git.
 
-- Review S2 request fields, key/rate policy, retries, cache và terminal statuses của full-group run.
+- Bàn giao discovery/source/S2 manifests, summaries, validation, run metadata và failure list; giữ raw/corpus trên máy/Drive.
+- Review S2 request fields, key/rate policy, retries, cache và terminal statuses trên shard của mình rồi đối chiếu toàn nhóm.
 - Đối chiếu mọi assigned publication, đặc biệt range `member-3`, với một S2 status duy nhất.
 - Xác nhận raw count, eligible arXiv references, dedup count, `publicationDate` mapping và failure taxonomy.
 - Ký xác nhận reference metrics/limitations trước khi M4 tổng hợp và M5 đưa vào Book.
 - Không sửa số liệu do S2 thiếu; giữ `not_found`, rate-limit và lỗi vĩnh viễn trong denominator.
 
-**Acceptance:** full-group S2 manifest reconcile; range `member-3` có coverage report; reference claims/metrics trong Book được Member 3 sign off.
+**Acceptance:** shard `member-3` có terminal status đầy đủ, artifact bundle đúng contract; full-group S2 manifest reconcile; reference claims/metrics trong Book được Member 3 sign off.
 
 ## 5. Interface bàn giao
 

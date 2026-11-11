@@ -84,17 +84,18 @@ Thông tin đã xác nhận: MSSV `23120204`, nhóm `18`, GitHub `laykhanhan0106
 - Đối chiếu thủ công nhỏ: endpoint/version, file inventory, hash/content commands.
 - Report mọi unsupported payload thật; không ép status thành success.
 
-### MS1-M2-T08 — Review source crawl của full-group run
+### MS1-M2-T08 — Crawl shard Member 2 và review source toàn nhóm
 
-Theo quyết định vận hành ngày 06/11/2026, Member 1 chạy union 25.000 IDs; Lày Khánh An không phải chạy trùng crawler riêng cho `member-2` nếu group artifacts đã đủ coverage.
+Theo quyết định vận hành ngày 11/11/2026, Lày Khánh An tự chạy discovery, source crawl và Semantic Scholar cho đúng 5.000 IDs của `member-2` theo README, trong data directory riêng ngoài Git.
 
-- Review downloader/extractor config, pacing, timeout, retries và resume của full-group run.
+- Bàn giao discovery/source/S2 manifests, summaries, validation, run metadata và failure list; giữ raw/corpus trên máy/Drive.
+- Review downloader/extractor config, pacing, timeout, retries và resume trên shard của mình rồi đối chiếu với các shard khác.
 - Đối chiếu terminal status cho mọi expected version, đặc biệt range `member-2`.
 - Kiểm tra PDF-only/no-TeX, archive lạ, `.bbl` fallback, file allowlist và size before/after filtering.
 - Ký xác nhận source metrics/failure taxonomy trước khi M4 tổng hợp và M5 đưa vào Book.
 - Không sửa manifest/corpus thủ công; mở issue cho M1 nếu group artifact thiếu hoặc trùng.
 
-**Acceptance:** full-group source manifest reconcile; range `member-2` có coverage report; source claims/metrics trong Book được Member 2 sign off.
+**Acceptance:** shard `member-2` có terminal status đầy đủ, artifact bundle đúng contract; full-group source manifest reconcile; source claims/metrics trong Book được Member 2 sign off.
 
 ## 5. Interface bàn giao
 

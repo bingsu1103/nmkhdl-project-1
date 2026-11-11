@@ -2,7 +2,7 @@
 
 > Phạm vi: toàn bộ đồ án Nhập môn Khoa học Dữ liệu, dựa trên `instructions/index.md`, `instructions/crawling.md`, `instructions/parsing.md`, `instructions/matching.md` và thông tin các cổng nộp Moodle do sinh viên cung cấp.
 >
-> Trạng thái ngày 06/11/2026: đã nhận và expand đủ năm range thành 25.000 candidate IDs; full discovery Member 1 đã đạt 5.000/5.000 metadata success và sinh 7.858 version tasks. Theo Q&A của giảng viên, nhóm được phép gộp toàn bộ assigned IDs và chạy chung. Nhóm chốt Member 1 vận hành full-group crawl 25.000 IDs sau khi hoàn tất/reconcile shard Member 1; Member 2–4 chịu trách nhiệm review module và quality gates, Member 5 dùng artifact nhóm để viết Book.
+> Trạng thái ngày 11/11/2026: đã nhận và expand đủ năm range thành 25.000 candidate IDs. Member 1 đã discovery 5.000/5.000 papers và có terminal status cho đủ 7.858 source-version tasks. Do raw shard Member 1 đã khoảng 31 GB, nhóm chuyển sang crawl phân tán: mỗi thành viên chạy đúng 5.000 IDs của mình, giữ raw data ngoài Git và bàn giao artifact chuẩn để tích hợp, validation, benchmark và viết Book toàn nhóm.
 
 ## 0. Xác định đúng phạm vi đồ án
 
@@ -336,17 +336,18 @@ Quy tắc:
 Mỗi người đồng thời có:
 
 1. **Functional ownership:** module chung được giao trong mục 7 và file assignment cá nhân.
-2. **Personal-range accountability:** chịu trách nhiệm xác nhận phần publications thuộc bốn trường range của mình có mặt đầy đủ trong output nhóm qua cả M1, M2, M3 và upload một Hugging Face dataset cá nhân. Điều này không đồng nghĩa mỗi người phải chạy một crawler riêng.
+2. **Personal-range accountability:** chịu trách nhiệm chạy và xác nhận phần publications thuộc range của mình có mặt đầy đủ trong output nhóm qua cả M1, M2, M3, đồng thời upload một Hugging Face dataset cá nhân.
 
-### Quyết định vận hành M1 ngày 06/11/2026
+### Quyết định vận hành M1 cập nhật ngày 11/11/2026
 
-- Member 1 hoàn tất shard `member-1`, sau đó vận hành crawl chung từ manifest union 25.000 IDs cho cả năm range.
-- Không yêu cầu Member 2–5 chạy lại 5.000 IDs riêng nếu full-group run đã có coverage/status hợp lệ cho range của họ.
-- Member 2 review source downloader/extractor, payload/failure classes và size metrics trên full-group artifacts.
-- Member 3 review Semantic Scholar crawl, raw/eligible counts, retry/rate-limit và reference mapping trên full-group artifacts.
-- Member 4 chạy reconciliation/schema/metrics và benchmark Colab CPU-only trên toàn bộ assigned data.
-- Member 5 chỉ dùng artifact đo thật đã được owner sign off để tạo bảng/figure trong Jupyter Book.
-- Không chạy nhiều process ghi cùng manifest đồng thời. Shard Member 1 chỉ được nhập vào group data-dir bằng merge/seed utility có dedup và reconciliation; không copy đè JSONL/CSV thủ công.
+- Mỗi Member 1–5 tự chạy discovery, source crawl và Semantic Scholar cho đúng shard 5.000 assigned IDs của mình bằng cùng commit/config.
+- Mỗi shard dùng data directory độc lập; không chạy nhiều process ghi cùng manifest và không commit raw/corpus/tables lớn lên Git.
+- Member 2 đồng thời review downloader/extractor, payload/failure classes và size metrics.
+- Member 3 đồng thời review Semantic Scholar, raw/eligible counts, retry/rate-limit và reference mapping.
+- Member 4 nhận năm artifact bundles, chạy merge/reconciliation/schema/metrics và tổ chức benchmark Colab CPU-only trên toàn bộ assigned data.
+- Member 5 cũng crawl shard `member-5`, sau đó chỉ dùng artifact đo thật đã được owner sign off để tạo bảng/figure trong Jupyter Book.
+- Member 1 làm integrator, không crawl thay bốn shard còn lại; chỉ nhận manifest/tables/metrics và điều phối bước merge có dedup/reconciliation.
+- Không nối JSONL/CSV hoặc copy đè data directory thủ công. Raw shard có thể ở máy/Drive riêng, nhưng manifest, run metadata và bảng kết quả phải truy xuất được.
 
 Không chia ownership dữ liệu theo module. Ví dụ Member 2 viết parser chung nhưng vẫn phải review crawling/parsing output liên quan module của mình; Member 4 viết model/validator chung nhưng không được tự sửa dữ liệu để làm metrics đẹp hơn. `member_id` chỉ nằm ở manifest/provenance và bước partition export, không tự ý thêm vào sáu published schemas nếu đề không quy định.
 

@@ -109,17 +109,18 @@ Thông tin đã xác nhận: MSSV `24120389`, nhóm `18`, GitHub `tuquocnghia`, 
 - Trước release chạy `git ls-files` + secret scan + size audit.
 - Phát hiện leak thì báo M1, rotate secret nếu cần; không chỉ xóa ở latest commit khi history vẫn chứa.
 
-### MS1-M4-T09 — Validate và benchmark full-group artifacts
+### MS1-M4-T09 — Crawl shard Member 4, tích hợp validation và benchmark
 
-Theo quyết định vận hành ngày 06/11/2026, Member 1 chạy union 25.000 IDs; Từ Quốc Nghĩa không phải chạy trùng crawler riêng cho `member-4` nếu group artifacts đã đủ coverage.
+Theo quyết định vận hành ngày 11/11/2026, Từ Quốc Nghĩa tự chạy discovery, source crawl và Semantic Scholar cho đúng 5.000 IDs của `member-4`, sau đó nhận năm artifact bundles để validate toàn nhóm.
 
+- Bàn giao shard `member-4` đúng handoff contract; giữ raw/corpus trên máy/Drive.
 - Reconcile năm ranges, 25.000 assigned IDs, expected versions, source statuses và S2 statuses.
 - Chạy schema/FK/uniqueness gates cho group `papers` và `references`, kèm breakdown theo member để phát hiện range thiếu.
 - Tạo `summary.json`, raw resource/session logs và metric definitions từ dữ liệu thật.
 - Chạy benchmark Colab CPU-only trên toàn bộ assigned data; nếu chia session, giữ từng log và tổng hợp cả retry/delay.
 - Ký xác nhận denominator/units trước khi M5 tạo bảng và biểu đồ.
 
-**Acceptance:** group validation pass hoặc có failure list trung thực; range `member-4` có coverage report; benchmark artifact tái tính được và được M4 sign off.
+**Acceptance:** shard `member-4` có terminal status/artifact đầy đủ; group validation pass hoặc có failure list trung thực; benchmark artifact tái tính được và được M4 sign off.
 
 ## 5. Phối hợp
 
