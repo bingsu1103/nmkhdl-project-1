@@ -198,8 +198,9 @@ manifests/discovery/discovery_summary.json
 manifests/discovery/discovery_status.jsonl
 manifests/discovery/papers.jsonl
 manifests/discovery/version_tasks.csv
-manifests/source_status.jsonl             # nguồn chuẩn để tính tổng toàn shard
-manifests/source_summary.json             # summary của run gần nhất, không mặc định là tổng shard
+manifests/source_status.jsonl             # nguồn chuẩn theo từng source-version
+manifests/source_summary.json             # tổng idempotent của toàn version-task manifest
+manifests/source_last_run_summary.json    # audit riêng của lần chạy gần nhất
 manifests/s2_summary.json                 # chỉ dùng sau full-shard S2 crawl, không dùng pilot/smoke
 events/discovery.jsonl
 tables/m1_validation_report.json        # chỉ có sau build/validate
@@ -220,7 +221,9 @@ tables/references/
 
 Người sở hữu shard giữ các thư mục này trên máy/Drive/SSD để tái xử lý. Integrator chỉ ghép các Parquet shard và manifest bằng bước merge/reconciliation có kiểm tra duplicate, coverage, schema và foreign key; không nối JSONL hoặc copy đè thủ công.
 
-Trạng thái Member 1 tại ngày 11/11/2026: discovery và source-version coverage đã xong; số tổng phải được tính từ 7.858 record trong `manifests/source_status.jsonl`. `manifests/source_summary.json` hiện là summary của lượt retry cuối, còn `manifests/s2_summary.json` hiện chỉ thuộc smoke test 3 paper. Vì vậy Member 1 vẫn phải chạy full Semantic Scholar, build tables, validation và metrics trước khi có một handoff bundle hoàn chỉnh cho báo cáo M1.
+Từ bản sửa idempotency ngày 11/11/2026, mỗi source run ghi audit của lần chạy vào `source_last_run_summary.json` rồi tái tính `source_summary.json` từ toàn bộ `source_status.jsonl`; chạy `all`, `missing-only` hay `retry-failures-only` không còn làm summary tổng bị thu nhỏ. Với data cũ, chạy lại một lệnh source ở chế độ resume sẽ tái tạo summary tổng mà không tải lại các status thành công.
+
+Trạng thái Member 1 tại ngày 11/11/2026: discovery và source-version coverage đã xong; tổng được tái tính từ 7.858 record trong `manifests/source_status.jsonl`. `manifests/s2_summary.json` hiện chỉ thuộc smoke test 3 paper. Vì vậy Member 1 vẫn phải chạy full Semantic Scholar, build tables, validation và metrics trước khi có một handoff bundle hoàn chỉnh cho báo cáo M1.
 
 ## Ví dụ run đã hoàn tất của Member 1
 
