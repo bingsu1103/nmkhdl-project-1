@@ -34,6 +34,7 @@ def run_source_pipeline(
     tasks_path, root = Path(version_tasks_csv), Path(data_dir)
     if not tasks_path.is_file():
         raise FileNotFoundError(f"Missing version task manifest: {tasks_path}")
+    all_tasks: list[dict[str, str]] = []
     tasks: list[dict[str, str]] = []
     with tasks_path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -41,6 +42,7 @@ def run_source_pipeline(
         if not required.issubset(reader.fieldnames or []):
             raise ValueError(f"version_tasks.csv must contain columns: {sorted(required)}")
         for row in reader:
+            all_tasks.append(row)
             if member_id and row["member_id"] != member_id:
                 continue
             if paper_ids and row["arxiv_id"] not in paper_ids:
@@ -119,20 +121,92 @@ def run_source_pipeline(
     counts: dict[str, int] = {}
     for row in statuses:
         counts[row["status"]] = counts.get(row["status"], 0) + 1
-    summary = {
+    run_summary = {
         "run_id": run_id, "expected_version_tasks": len(tasks),
         "candidate_version_tasks": candidate_task_count,
         "skipped_version_tasks": candidate_task_count - len(tasks),
         "selection_mode": selection_mode,
         "terminal_status_records": len(statuses), "status_counts": dict(sorted(counts.items())),
         "manifest_status_records": len(persisted),
-        "source_status_manifest": str(manifest),
+        "source_status_manifest": str(Path("manifests") / manifest.name),
         "archive_bytes": sum((r.get("download") or {}).get("archive_bytes", 0) for r in statuses),
         "filtered_tex_bib_bytes": sum((r.get("extraction") or {}).get("filtered_bytes", 0) for r in statuses),
     }
+    run_summary_path = root / "manifests" / "source_last_run_summary.json"
+    _write_json_atomic(run_summary_path, run_summary)
+
+    aggregate_summary = _build_aggregate_summary(
+        version_tasks=all_tasks,
+        persisted=persisted,
+        manifest=manifest,
+    )
     summary_path = root / "manifests" / "source_summary.json"
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True)+"\n", encoding="utf-8")
-    return summary
+    _write_json_atomic(summary_path, aggregate_summary)
+    return run_summary
+
+
+def _build_aggregate_summary(
+    *,
+    version_tasks: list[dict[str, str]],
+    persisted: dict[str, dict[str, Any]],
+    manifest: Path,
+) -> dict[str, Any]:
+    """Build a deterministic whole-manifest summary, independent of run mode."""
+    task_keys = {_status_key(task) for task in version_tasks}
+    matched = [persisted[key] for key in sorted(task_keys & persisted.keys())]
+    unexpected_keys = sorted(persisted.keys() - task_keys)
+    missing_keys = sorted(task_keys - persisted.keys())
+
+    counts: dict[str, int] = {}
+    member_tasks: dict[str, int] = {}
+    member_rows: dict[str, list[dict[str, Any]]] = {}
+    for task in version_tasks:
+        member = str(task.get("member_id") or "unknown")
+        member_tasks[member] = member_tasks.get(member, 0) + 1
+    for row in matched:
+        status = str(row.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+        member = str(row.get("member_id") or "unknown")
+        member_rows.setdefault(member, []).append(row)
+
+    members: dict[str, dict[str, Any]] = {}
+    for member in sorted(set(member_tasks) | set(member_rows)):
+        rows = member_rows.get(member, [])
+        status_counts: dict[str, int] = {}
+        for row in rows:
+            status = str(row.get("status") or "unknown")
+            status_counts[status] = status_counts.get(status, 0) + 1
+        expected = member_tasks.get(member, 0)
+        members[member] = {
+            "expected_version_tasks": expected,
+            "terminal_status_records": len(rows),
+            "missing_status_records": max(0, expected - len(rows)),
+            "status_counts": dict(sorted(status_counts.items())),
+        }
+
+    expected_total = len(version_tasks)
+    terminal_total = len(matched)
+    return {
+        "summary_scope": "entire_version_task_manifest",
+        "version_tasks_total": expected_total,
+        "terminal_status_records": terminal_total,
+        "missing_status_records": len(missing_keys),
+        "unexpected_status_records": len(unexpected_keys),
+        "coverage_rate": terminal_total / expected_total if expected_total else 1.0,
+        "status_counts": dict(sorted(counts.items())),
+        "archive_bytes": sum(
+            int((row.get("download") or {}).get("archive_bytes") or 0)
+            for row in matched
+        ),
+        "filtered_tex_bib_bytes": sum(
+            int((row.get("extraction") or {}).get("filtered_bytes") or 0)
+            for row in matched
+        ),
+        "source_status_manifest": str(Path("manifests") / manifest.name),
+        "members": members,
+        "missing_versioned_arxiv_ids": missing_keys,
+        "unexpected_versioned_arxiv_ids": unexpected_keys,
+    }
 
 
 def _status_key(row: dict[str, Any]) -> str:
@@ -175,6 +249,17 @@ def _write_status_manifest(path: Path, rows: Any) -> None:
     with temporary.open("w", encoding="utf-8") as handle:
         for row in ordered:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        import os
+        os.fsync(handle.fileno())
+    temporary.replace(path)
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
         handle.flush()
         import os
         os.fsync(handle.fileno())

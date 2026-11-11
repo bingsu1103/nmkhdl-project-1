@@ -297,3 +297,86 @@ def test_retry_failures_only_skips_success_and_missing_tasks(tmp_path: Path) -> 
     rows = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
     assert len(rows) == 1
     assert rows[0]["status"] == "success"
+
+
+def test_source_summary_is_idempotent_across_targeted_retries(tmp_path: Path) -> None:
+    tasks = tmp_path / "version_tasks.csv"
+    write_two_member_one_tasks(tasks)
+    data = tmp_path / "data"
+
+    first_downloader = mock.Mock()
+    first_downloader.download.side_effect = (
+        FakeDownload("retry_exhausted", None, archive_bytes=0),
+        FakeDownload("success", str(tmp_path / "source.archive")),
+    )
+    extractor = mock.Mock()
+    extractor.extract.return_value = FakeExtraction("success")
+    with mock.patch(
+        "src.source_pipeline.ArxivSourceDownloader", return_value=first_downloader
+    ):
+        with mock.patch(
+            "src.source_pipeline.SafeSourceExtractor", return_value=extractor
+        ):
+            run_source_pipeline(
+                version_tasks_csv=tasks,
+                data_dir=data,
+                user_agent="group-18-test",
+                member_id="member-1",
+            )
+
+    aggregate_path = data / "manifests" / "source_summary.json"
+    first_aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    assert first_aggregate["version_tasks_total"] == 2
+    assert first_aggregate["terminal_status_records"] == 2
+    assert first_aggregate["status_counts"] == {
+        "retry_exhausted": 1,
+        "success": 1,
+    }
+
+    retry_downloader = mock.Mock()
+    retry_downloader.download.return_value = FakeDownload(
+        "success", str(tmp_path / "source.archive")
+    )
+    with mock.patch(
+        "src.source_pipeline.ArxivSourceDownloader", return_value=retry_downloader
+    ):
+        with mock.patch(
+            "src.source_pipeline.SafeSourceExtractor", return_value=extractor
+        ):
+            retry_summary = run_source_pipeline(
+                version_tasks_csv=tasks,
+                data_dir=data,
+                user_agent="group-18-test",
+                member_id="member-1",
+                retry_failures_only=True,
+            )
+
+    assert retry_summary["expected_version_tasks"] == 1
+    assert retry_summary["status_counts"] == {"success": 1}
+    second_aggregate = json.loads(aggregate_path.read_text(encoding="utf-8"))
+    assert second_aggregate["version_tasks_total"] == 2
+    assert second_aggregate["terminal_status_records"] == 2
+    assert second_aggregate["status_counts"] == {"success": 2}
+    assert second_aggregate["archive_bytes"] == 20
+    assert second_aggregate["filtered_tex_bib_bytes"] == 14
+
+    stable_bytes = aggregate_path.read_bytes()
+    no_work_downloader = mock.Mock()
+    with mock.patch(
+        "src.source_pipeline.ArxivSourceDownloader", return_value=no_work_downloader
+    ):
+        with mock.patch(
+            "src.source_pipeline.SafeSourceExtractor", return_value=extractor
+        ):
+            no_work_summary = run_source_pipeline(
+                version_tasks_csv=tasks,
+                data_dir=data,
+                user_agent="group-18-test",
+                member_id="member-1",
+                retry_failures_only=True,
+            )
+
+    assert no_work_summary["expected_version_tasks"] == 0
+    assert no_work_summary["status_counts"] == {}
+    assert aggregate_path.read_bytes() == stable_bytes
+    no_work_downloader.download.assert_not_called()
