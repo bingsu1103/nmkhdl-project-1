@@ -36,6 +36,12 @@ from .source_pipeline import run_source_pipeline
 from .storage import PAPERS_SCHEMA, REFERENCES_SCHEMA, read_sharded_parquet
 from .validate import compute_crawl_statistics
 from .parse_pipeline import run_parse_pipeline
+from .m2_contracts import ParsingContractError
+from .m2_integration import (
+    Milestone2IntegrationError,
+    build_m2_tables,
+    validate_m2_tables,
+)
 from .s2_client import (
     DONE_STATUSES,
     crawl_references,
@@ -131,11 +137,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     parse_sources = subparsers.add_parser(
         "parse-sources",
-        help="Build compilation paths and hierarchical elements from extracted TeX.",
+        help="Deprecated alias for the M2 parse command.",
     )
-    parse_sources.add_argument("--data-dir", type=Path, required=True)
-    parse_sources.add_argument("--member")
+    _add_m2_parse_arguments(parse_sources)
     parse_sources.set_defaults(handler=_parse_sources)
+
+    parse = subparsers.add_parser(
+        "parse",
+        help="Run reconciled, checkpointed Milestone 2 hierarchical parsing.",
+    )
+    _add_m2_parse_arguments(parse)
+    parse.set_defaults(handler=_parse_sources)
+
+    build_parsing_tables = subparsers.add_parser(
+        "build-parsing-tables",
+        help="Build elements/hierarchy/bibtex Parquet tables from M2 adapter outputs.",
+    )
+    build_parsing_tables.add_argument("--data-dir", type=Path, required=True)
+    build_parsing_tables.set_defaults(handler=_build_parsing_tables)
+
+    validate_parsing = subparsers.add_parser(
+        "validate-parsing",
+        help="Validate M2 schemas, hierarchy integrity, deduplication and coverage.",
+    )
+    validate_parsing.add_argument("--data-dir", type=Path, required=True)
+    validate_parsing.set_defaults(handler=_validate_parsing)
+
+    benchmark_parsing = subparsers.add_parser(
+        "benchmark-parsing",
+        help="Benchmark M2 parsing on existing M1 sources with resource monitoring.",
+    )
+    _add_m2_parse_arguments(benchmark_parsing)
+    benchmark_parsing.add_argument("--monitor-interval-seconds", type=float, default=0.5)
+    benchmark_parsing.add_argument("--disk-interval-seconds", type=float, default=2.0)
+    benchmark_parsing.set_defaults(handler=_benchmark_parsing)
 
     references = subparsers.add_parser(
         "crawl-references",
@@ -191,6 +226,8 @@ def main(argv: list[str] | None = None) -> int:
     except (
         DiscoveryError,
         Milestone1IntegrationError,
+        Milestone2IntegrationError,
+        ParsingContractError,
         RangeValidationError,
         VersionResolutionError,
         OSError,
@@ -258,6 +295,17 @@ def _add_m1_workflow_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--monitor-interval-seconds", type=float, default=0.5)
     parser.add_argument("--disk-interval-seconds", type=float, default=2.0)
+
+
+def _add_m2_parse_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--data-dir", type=Path, required=True)
+    parser.add_argument("--member")
+    parser.add_argument("--paper", action="append", default=[])
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Ignore parsing checkpoints and recompute every selected version.",
+    )
 
 
 def _fixture_discover(args: argparse.Namespace) -> int:
@@ -396,8 +444,67 @@ def _crawl_sources(args: argparse.Namespace) -> int:
 
 def _parse_sources(args: argparse.Namespace) -> int:
     data_dir = _external_data_dir(args.data_dir)
-    summary = run_parse_pipeline(data_dir=data_dir, member_id=args.member)
+    summary = run_parse_pipeline(
+        data_dir=data_dir,
+        member_id=args.member,
+        paper_ids=set(args.paper),
+        resume=not args.no_resume,
+    )
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK if summary["failed_or_partial"] == 0 else EXIT_PARTIAL_FAILURE
+
+
+def _build_parsing_tables(args: argparse.Namespace) -> int:
+    summary = build_m2_tables(data_dir=_external_data_dir(args.data_dir))
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
+def _validate_parsing(args: argparse.Namespace) -> int:
+    report = validate_m2_tables(data_dir=_external_data_dir(args.data_dir))
+    print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK if report["is_valid"] else EXIT_PARTIAL_FAILURE
+
+
+def _benchmark_parsing(args: argparse.Namespace) -> int:
+    data_dir = _external_data_dir(args.data_dir)
+    monitor = ResourceMonitor(
+        data_dir=data_dir,
+        interval_sec=args.monitor_interval_seconds,
+        disk_interval_sec=args.disk_interval_seconds,
+    )
+    started = time.monotonic()
+    monitor.start()
+    try:
+        summary = run_parse_pipeline(
+            data_dir=data_dir,
+            member_id=args.member,
+            paper_ids=set(args.paper),
+            resume=False,
+        )
+    finally:
+        resources = monitor.stop()
+    elapsed = round(time.monotonic() - started, 4)
+    publications = len(
+        {
+            line.get("arxiv_id")
+            for line in _read_jsonl_objects(data_dir / "parsed/parse_status.jsonl")
+        }
+    )
+    result = {
+        "parser": summary,
+        "performance": {
+            **resources,
+            "end_to_end_wall_time_sec": elapsed,
+            "publication_count": publications,
+            "average_time_per_publication_sec": round(
+                elapsed / max(1, publications), 4
+            ),
+        },
+    }
+    output = data_dir / "metrics/m2_parsing_benchmark.json"
+    _write_json_atomic(output, result)
+    print(json.dumps({**result, "output": str(output)}, ensure_ascii=False, indent=2, sort_keys=True))
     return EXIT_OK if summary["failed_or_partial"] == 0 else EXIT_PARTIAL_FAILURE
 
 
