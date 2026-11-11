@@ -376,6 +376,74 @@ python -m src.cli fixture-discover \
 
 Event resumed có `"resumed": true`. Nếu bytes của một trong hai input thay đổi, fingerprint đổi và pipeline không reuse checkpoint cũ.
 
+## Milestone 2 — Parsing orchestration
+
+Milestone 2 dùng trực tiếp `version_tasks.csv`, `source_status.jsonl` và corpus `.tex/.bib` của M1. M1→M2 contract bắt buộc mọi expected version phải có đúng một source status: `success` trở thành input `ready`, `no_tex_bib` trở thành explicit `empty`, còn lỗi source vĩnh viễn được giữ thành `source_unavailable`. Không version nào được bỏ im lặng.
+
+### Chạy thử một publication
+
+```bash
+.venv/bin/python -m src.cli parse \
+  --data-dir ../nmkhdl-project-1-data \
+  --member member-1 \
+  --paper 2509.21046
+```
+
+### Parse toàn bộ shard Member 1
+
+```bash
+caffeinate -i .venv/bin/python -m src.cli parse \
+  --data-dir ../nmkhdl-project-1-data \
+  --member member-1
+```
+
+Mặc định lệnh resume theo từng version. Checkpoint chỉ được reuse khi đồng thời khớp source fingerprint, parser schema/config version và version lineage. Chạy lại cùng lệnh sau `Ctrl+C`; dùng `--no-resume` chỉ khi cần ép parse lại toàn bộ selected scope.
+
+Output nằm ngoài Git:
+
+```text
+<data-dir>/
+├── checkpoints/parsing/<arxiv-id>/<versioned-id>.json
+├── manifests/parsing/m2_inputs.jsonl
+├── manifests/parsing/m2_input_reconciliation.json
+└── parsed/
+    ├── elements.jsonl
+    ├── hierarchy.jsonl
+    ├── parse_status.jsonl
+    ├── parse_summary.json
+    └── bibtex.jsonl              # adapter standardization/BibTeX của Member 3
+```
+
+`element_id` được tạo deterministically từ publication, kind và cleaned content; nội dung giống hệt trong các version dùng chung một ID, còn `hierarchy` giữ edge riêng theo version. References section bị loại khỏi hierarchy; acknowledgements/appendices vẫn được giữ theo đề.
+
+### Build và validate ba bảng M2
+
+Chỉ chạy khi adapter Member 3 đã tạo `parsed/bibtex.jsonl`. Pipeline cố ý fail nếu thiếu file này, không tạo placeholder để vượt gate giả:
+
+```bash
+.venv/bin/python -m src.cli build-parsing-tables \
+  --data-dir ../nmkhdl-project-1-data
+
+.venv/bin/python -m src.cli validate-parsing \
+  --data-dir ../nmkhdl-project-1-data
+```
+
+Ba bảng được ghi vào `tables/elements`, `tables/hierarchy`, `tables/bibtex`. Validation kiểm tra schema, content dedup, tree root/cycle/orphan/parent integrity, BibTeX key uniqueness và publication-version coverage.
+
+### Benchmark parser
+
+Benchmark chính thức phải chạy trên Google Colab CPU-only và không reuse parse checkpoint:
+
+```bash
+.venv/bin/python -m src.cli benchmark-parsing \
+  --data-dir ../nmkhdl-project-1-data \
+  --member member-1
+```
+
+Kết quả được ghi vào `metrics/m2_parsing_benchmark.json`, gồm wall time end-to-end, average/publication, peak RAM và disk/storage samples. Không dùng benchmark local làm kết quả Colab chính thức.
+
+Hiện full Semantic Scholar/tables/validation của M1 vẫn phải hoàn tất song song. Source coverage đủ để bắt đầu parsing, nhưng điều đó không đồng nghĩa toàn bộ M1 đã qua release gate.
+
 ## Exit codes
 
 | Code | Ý nghĩa |
