@@ -3,6 +3,7 @@ import json
 import pytest
 
 from src.bibtex import (
+    cited_keys,
     clean_latex,
     collect_version_entries,
     convert_bibitem,
@@ -10,6 +11,7 @@ from src.bibtex import (
     entry_from_bib,
     parse_bib_file,
     parse_bibitems,
+    rewrite_citations,
     run_bibtex_stage,
 )
 from src.storage import BIBTEX_SCHEMA, create_table_from_records
@@ -191,13 +193,22 @@ def test_dedup_records_field_conflicts_and_prefers_latest_version():
                           "chosen": "New Venue", "dropped": ["Old Venue"]}]
 
 
+# ---------------------------------------------------------------- \\cite rewrite
+
+def test_rewrite_citations_multi_key_optional_args_and_duplicates():
+    aliases = {"vaswani2017": "vit", "old": "new"}
+    text = r"See \cite{vaswani2017, b} and \citep[see][p.~2]{old,new}, \citet*{x}, \nocite{*}."
+    assert rewrite_citations(text, aliases) == r"See \cite{vit,b} and \citep[see][p.~2]{new}, \citet*{x}, \nocite{*}."
+    assert cited_keys(text) == ["vaswani2017", "b", "old", "new", "x"]
+
+
 # ---------------------------------------------------------------- stage end-to-end
 
 def test_run_bibtex_stage_output_passes_m4_validator(tmp_path):
     def version_dir(v):
         return tmp_path / "corpus" / "tex" / "2510.19401" / f"2510.19401v{v}"
 
-    _write(version_dir(1) / "main.tex", "\\documentclass{article}\\bibliography{refs}")
+    _write(version_dir(1) / "main.tex", "\\documentclass{article} As in \\cite{vaswani2017,ghost}.\\bibliography{refs}")
     _write(version_dir(1) / "refs.bib", "@article{vaswani2017, title={Attention Is All You Need}, author={Vaswani, Ashish}, year={2017}}")
     _write(version_dir(2) / "main.tex", "\\documentclass{article}\\begin{thebibliography}{1}"
            "\\bibitem{vit_transformer} A.~Vaswani.\n\\newblock Attention is all you need.\n\\newblock arXiv preprint, 2017. doi:10.1000/abc\n"
@@ -222,3 +233,7 @@ def test_run_bibtex_stage_output_passes_m4_validator(tmp_path):
     table = create_table_from_records(rows, BIBTEX_SCHEMA)
     report = validate_bibtex_table(table)
     assert report.is_valid, report.to_dict()
+    citations = [json.loads(line) for line in (tmp_path / "parsed" / "bibtex_citations.jsonl").read_text().splitlines()]
+    assert [(c["cited_key"], c["canonical_key"], c["status"]) for c in citations] == [
+        ("vaswani2017", "vit_transformer", "renamed"), ("ghost", None, "unresolved")]
+    assert summary["citations_renamed"] == 1 and summary["citations_unresolved"] == 1

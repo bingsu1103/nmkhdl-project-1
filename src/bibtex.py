@@ -366,6 +366,34 @@ def deduplicate_entries(entries: list[dict[str, Any]]) -> tuple[list[dict[str, A
     return rows, aliases, conflicts
 
 
+# ---------------------------------------------------------------- \cite rewrite
+
+_CITE_RE = re.compile(r"\\((?:no)?cite[A-Za-z]*\*?)\s*((?:\[[^\]]*\]\s*){0,2})\{([^{}]*)\}")
+
+
+def cited_keys(text: str) -> list[str]:
+    """Citation keys used by \\cite-family commands, in order of appearance."""
+    return [k.strip() for m in _CITE_RE.finditer(text) for k in m.group(3).split(",") if k.strip() and k.strip() != "*"]
+
+
+def rewrite_citations(text: str, alias_map: dict[str, str]) -> str:
+    """Rename dropped keys to their canonical key inside every \\cite{...}; a repeated key is kept once."""
+    def repl(m: re.Match) -> str:
+        keys = [alias_map.get(k.strip(), k.strip()) for k in m.group(3).split(",") if k.strip()]
+        return f"\\{m.group(1)}{m.group(2)}{{{','.join(dict.fromkeys(keys))}}}"
+    return _CITE_RE.sub(repl, text)
+
+
+def _citation_rows(arxiv_id: str, version: int, keys: list[str], canonical: set[str], alias_map: dict[str, str]) -> list[dict[str, Any]]:
+    rows = []
+    for key in dict.fromkeys(keys):
+        target = alias_map.get(key, key)
+        status = "unresolved" if target not in canonical else ("renamed" if target != key else "ok")
+        rows.append({"arxiv_id": arxiv_id, "version": version, "cited_key": key,
+                     "canonical_key": target if status != "unresolved" else None, "status": status})
+    return rows
+
+
 # ---------------------------------------------------------------- stage runner
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -387,6 +415,7 @@ def run_bibtex_stage(*, data_dir: str | Path) -> dict[str, Any]:
     by_paper: dict[str, list[dict[str, Any]]] = {}
     raw_rows: list[dict[str, Any]] = []
     version_rows: list[dict[str, Any]] = []
+    cites: dict[tuple[str, int], list[str]] = {}
     for st in statuses:
         arxiv_id, version = st["arxiv_id"], int(st["version"])
         by_paper.setdefault(arxiv_id, [])
@@ -394,7 +423,10 @@ def run_bibtex_stage(*, data_dir: str | Path) -> dict[str, Any]:
         if st["status"] not in PARSED_STATUSES or not source_dir:
             version_rows.append({"arxiv_id": arxiv_id, "version": version, "status": "skipped", "parse_status": st["status"], "raw_entries": 0, "diagnostics": []})
             continue
-        entries, diagnostics = collect_version_entries(root / source_dir, st.get("reachable_files") or [])
+        reachable = st.get("reachable_files") or []
+        entries, diagnostics = collect_version_entries(root / source_dir, reachable)
+        cites[(arxiv_id, version)] = [k for rel in reachable for k in cited_keys(
+            strip_latex_comments((root / source_dir / rel).read_text(encoding="utf-8", errors="replace")))]
         for order, e in enumerate(entries):
             e.update(arxiv_id=arxiv_id, version=version, order=order)
         by_paper[arxiv_id] += entries
@@ -408,6 +440,15 @@ def run_bibtex_stage(*, data_dir: str | Path) -> dict[str, Any]:
         aliases += al
         conflicts += co
 
+    canonical_by_paper: dict[str, set[str]] = {}
+    for r in unified:
+        canonical_by_paper.setdefault(r["arxiv_id"], set()).add(r["citation_key"])
+    alias_by_paper: dict[str, dict[str, str]] = {}
+    for a in aliases:
+        alias_by_paper.setdefault(a["arxiv_id"], {})[a["alias_key"]] = a["canonical_key"]
+    citation_rows = [row for (aid, ver), keys in sorted(cites.items()) for row in
+                     _citation_rows(aid, ver, keys, canonical_by_paper.get(aid, set()), alias_by_paper.get(aid, {}))]
+
     out = root / "parsed"
     out.mkdir(parents=True, exist_ok=True)
     _write_jsonl_atomic(out / "bibtex.jsonl", [{k: r[k] for k in TABLE_FIELDS} for r in unified])
@@ -415,6 +456,7 @@ def run_bibtex_stage(*, data_dir: str | Path) -> dict[str, Any]:
     _write_jsonl_atomic(out / "bibtex_aliases.jsonl", aliases)
     _write_jsonl_atomic(out / "bibtex_conflicts.jsonl", conflicts)
     _write_jsonl_atomic(out / "bibtex_status.jsonl", version_rows)
+    _write_jsonl_atomic(out / "bibtex_citations.jsonl", citation_rows)
 
     summary = {
         "versions_total": len(version_rows),
@@ -430,6 +472,9 @@ def run_bibtex_stage(*, data_dir: str | Path) -> dict[str, Any]:
         "field_conflicts": len(conflicts),
         "title_from_raw": sum("title_from_raw" in e["warnings"] for e in raw_rows),
         "missing_bib_files": sum(d.startswith("missing_bib:") for v in version_rows for d in v["diagnostics"]),
+        "citations_total": len(citation_rows),
+        "citations_renamed": sum(c["status"] == "renamed" for c in citation_rows),
+        "citations_unresolved": sum(c["status"] == "unresolved" for c in citation_rows),
     }
     (out / "bibtex_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return summary
