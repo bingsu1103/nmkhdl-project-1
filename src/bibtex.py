@@ -261,3 +261,41 @@ def convert_bibitem(key: str, raw: str) -> tuple[dict[str, Any], list[str]]:
         "journal": venue.strip(" .,") or None if entry_type in {"article", "inproceedings"} else None,
         "url": url,
     }, warnings
+
+
+# ---------------------------------------------------------------- compilation path
+
+def collect_version_entries(source_dir: str | Path, reachable_files: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Raw bibliography entries of one version, read only from files on its compilation path."""
+    root = Path(source_dir)
+    entries: list[dict[str, Any]] = []
+    diagnostics: list[str] = []
+    seen_bib: set[Path] = set()
+    for rel in reachable_files:
+        tex_path = root / rel
+        text = strip_latex_comments(tex_path.read_text(encoding="utf-8", errors="replace"))
+        for cmd in _BIB_CMD_RE.finditer(text):
+            for name in (n.strip() for n in cmd.group(1).split(",")):
+                if not name:
+                    continue
+                name = name if name.endswith(".bib") else name + ".bib"
+                bib = next((p for p in (root / name, tex_path.parent / name) if p.is_file()), None)
+                if bib is None:
+                    diagnostics.append(f"missing_bib:{name}")
+                    continue
+                if bib.resolve() in seen_bib:
+                    continue
+                seen_bib.add(bib.resolve())
+                raws, warns = parse_bib_file(bib.read_text(encoding="utf-8", errors="replace"))
+                diagnostics += [f"{bib.relative_to(root).as_posix()}:{w}" for w in warns]
+                for raw in raws:
+                    entries.append({**entry_from_bib(raw), "origin": "bib", "source_file": bib.relative_to(root).as_posix(), "warnings": []})
+        for block in _THEBIB_RE.finditer(text):
+            for key, raw in parse_bibitems(block.group(1)):
+                try:
+                    entry, warns = convert_bibitem(key, raw)
+                except Exception as exc:  # one malformed item must not drop the others
+                    diagnostics.append(f"bibitem_error:{key}:{type(exc).__name__}")
+                    continue
+                entries.append({**entry, "origin": "bibitem", "source_file": rel, "raw": raw, "warnings": warns})
+    return entries, diagnostics

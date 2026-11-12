@@ -2,6 +2,7 @@ import pytest
 
 from src.bibtex import (
     clean_latex,
+    collect_version_entries,
     convert_bibitem,
     entry_from_bib,
     parse_bib_file,
@@ -93,3 +94,44 @@ def test_parse_bibitems_optional_labels_and_multiline():
     items = parse_bibitems(block)
     assert [k for k, _ in items] == ["vas", "ho"]
     assert "Attention" in items[0][1] and "Diffusion" in items[1][1]
+
+
+# ---------------------------------------------------------------- compilation path
+
+def _write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_collect_reads_only_bibliography_on_compilation_path(tmp_path):
+    _write(tmp_path / "main.tex", "\\documentclass{article}\n% \\bibliography{commented}\n\\input{sec/refs}\n")
+    _write(tmp_path / "sec" / "refs.tex", "\\bibliography{a,b.bib,missing}\n"
+           "\\begin{thebibliography}{9}\\bibitem{inl} A. B. Inline title. 2001.\\end{thebibliography}")
+    _write(tmp_path / "a.bib", "@article{ka, title={From A}, year={2000}}")
+    _write(tmp_path / "b.bib", "@misc{kb, title={From B}}")
+    _write(tmp_path / "commented.bib", "@misc{no1, title={Commented out}}")
+    _write(tmp_path / "unused.bib", "@misc{no2, title={Not on path}}")
+
+    entries, diagnostics = collect_version_entries(tmp_path, ["main.tex", "sec/refs.tex"])
+
+    assert [e["citation_key"] for e in entries] == ["ka", "kb", "inl"]
+    assert [e["origin"] for e in entries] == ["bib", "bib", "bibitem"]
+    assert entries[0]["source_file"] == "a.bib" and entries[2]["source_file"] == "sec/refs.tex"
+    assert diagnostics == ["missing_bib:missing.bib"]
+
+
+def test_collect_malformed_bibitem_does_not_drop_others(tmp_path, monkeypatch):
+    import src.bibtex as bibtex
+
+    real = bibtex.convert_bibitem
+
+    def flaky(key, raw):
+        if key == "bad":
+            raise ValueError("boom")
+        return real(key, raw)
+
+    monkeypatch.setattr(bibtex, "convert_bibitem", flaky)
+    _write(tmp_path / "main.tex", "\\begin{thebibliography}{9}\\bibitem{ok1} A. T. One.\\bibitem{bad} x\\bibitem{ok2} B. T. Two.\\end{thebibliography}")
+    entries, diagnostics = collect_version_entries(tmp_path, ["main.tex"])
+    assert [e["citation_key"] for e in entries] == ["ok1", "ok2"]
+    assert diagnostics == ["bibitem_error:bad:ValueError"]
