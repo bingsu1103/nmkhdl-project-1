@@ -167,3 +167,97 @@ def entry_from_bib(raw: dict[str, Any]) -> dict[str, Any]:
         "journal": clean_latex(f.get("journal") or f.get("booktitle")) or None,
         "url": url,
     }
+
+
+# ---------------------------------------------------------------- \bibitem conversion
+
+def parse_bibitems(block: str) -> list[tuple[str, str]]:
+    """Split a thebibliography body into ``(citation_key, raw_text)`` pairs."""
+    matches = list(_BIBITEM_RE.finditer(block))
+    items = []
+    for k, m in enumerate(matches):
+        end = matches[k + 1].start() if k + 1 < len(matches) else len(block)
+        items.append((m.group(1).strip(), block[m.end():end].strip()))
+    return items
+
+
+def _split_authors(text: str) -> list[str]:
+    text = re.sub(r"\bet\s*al\.?", "", text)
+    parts = [p.strip(" .") for p in re.split(r",\s*(?:and\s+)?|\s+and\s+|\s*&\s*", text) if p.strip(" .")]
+    merged: list[str] = []
+    for p in parts:  # "Vaswani, A., Shazeer, N." -> pair surname with its initials
+        if merged and _INITIALS_RE.match(p + ".") and " " not in merged[-1]:
+            merged[-1] = f"{p}. {merged[-1]}".replace("..", ".")
+        else:
+            merged.append(p)
+    return [a for a in merged if any(ch.isalpha() for ch in a)]
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split on '. ' but keep author initials ("A. Vaswani") inside the author sentence."""
+    initial_first = bool(re.match(r"[A-Z]\.", text))  # "A. Vaswani" style vs "Vaswani, A." style
+    merged: list[str] = []
+    for part in (p.strip() for p in re.split(r"(?<=[\w)\]])\.\s+", text)):
+        ends_initial = re.search(r"(?:^|[\s.\-])[A-Z]$", merged[-1]) if merged else None
+        if ends_initial and (initial_first or not re.search(r",\s*[A-Z]$", merged[-1])):
+            merged[-1] += ". " + part
+        elif part:
+            merged.append(part)
+    return merged
+
+
+def _guess_type(venue: str) -> str:
+    v = venue.lower()
+    if re.search(r"\bthesis\b", v):
+        return "phdthesis"
+    if re.match(r"\s*in\b", v) or re.search(r"\b(proc\.?|proceedings|conference|workshop|symposium)\b", v):
+        return "inproceedings"
+    if re.search(r"arxiv|preprint", v):
+        return "misc"
+    if re.search(r"journal|trans\.|transactions|letters|review|\d+\s*\(\d+\)", v):
+        return "article"
+    return "misc"
+
+
+def convert_bibitem(key: str, raw: str) -> tuple[dict[str, Any], list[str]]:
+    """Map one \\bibitem to BibTeX fields; a field is set only when the text supports it."""
+    warnings: list[str] = []
+    doi = _DOI_RE.search(raw)
+    url_m = _URL_RE.search(raw)
+    url = (url_m.group(1) or url_m.group(2)) if url_m else None
+    arxiv = _ARXIV_RE.search(raw)
+    if not url and arxiv:
+        url = f"https://arxiv.org/abs/{arxiv.group(1)}"
+    body = _URL_RE.sub(" ", _DOI_RE.sub(" ", raw))
+
+    quoted = re.search(r"``(.+?)''|\"(.+?)\"", body, re.S)
+    if "\\newblock" in body:  # plain/natbib .bbl layout: authors \newblock title \newblock venue
+        blocks = [clean_latex(b).strip(" .,") for b in body.split("\\newblock")]
+        authors_txt, title, venue = blocks[0], blocks[1] if len(blocks) > 1 else "", " ".join(blocks[2:])
+    elif quoted:
+        title = clean_latex(quoted.group(1) or quoted.group(2)).strip(" .,")
+        authors_txt, venue = clean_latex(body[:quoted.start()]), clean_latex(body[quoted.end():])
+    else:
+        sentences = _split_sentences(clean_latex(body))
+        authors_txt = sentences[0] if len(sentences) > 1 else ""
+        title = sentences[1].strip(" .") if len(sentences) > 1 else ""
+        venue = " ".join(sentences[2:])
+        warnings.append("no_block_markers")
+
+    year = _YEAR_RE.search(clean_latex(body))
+    authors_txt = _YEAR_RE.sub("", re.sub(r"\(\s*\)", "", authors_txt.replace(f"({year.group(1)})" if year else "\0", "")))
+    entry_type = _guess_type(venue)
+    venue = re.sub(r"\bdoi\s*:?\s*$", "", re.sub(r"^\s*in\s+", "", venue, flags=re.I), flags=re.I)
+    if not title:
+        title = clean_latex(raw)  # validator needs a title; full text keeps the evidence for matching
+        warnings.append("title_from_raw")
+    return {
+        "citation_key": key,
+        "entry_type": entry_type,
+        "title": title,
+        "authors": _split_authors(authors_txt),
+        "year": int(year.group(1)) if year else None,
+        "doi": doi.group(0).rstrip(".") if doi else None,
+        "journal": venue.strip(" .,") or None if entry_type in {"article", "inproceedings"} else None,
+        "url": url,
+    }, warnings
