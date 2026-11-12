@@ -4,6 +4,7 @@ from src.bibtex import (
     clean_latex,
     collect_version_entries,
     convert_bibitem,
+    deduplicate_entries,
     entry_from_bib,
     parse_bib_file,
     parse_bibitems,
@@ -135,3 +136,51 @@ def test_collect_malformed_bibitem_does_not_drop_others(tmp_path, monkeypatch):
     entries, diagnostics = collect_version_entries(tmp_path, ["main.tex"])
     assert [e["citation_key"] for e in entries] == ["ok1", "ok2"]
     assert diagnostics == ["bibitem_error:bad:ValueError"]
+
+
+# ---------------------------------------------------------------- dedup
+
+def _entry(version, key, order=0, **fields):
+    base = dict(arxiv_id="2510.19401", version=version, order=order, citation_key=key, entry_type="misc",
+                title="", authors=[], year=None, doi=None, journal=None, url=None, warnings=[])
+    base.update(fields)
+    return base
+
+
+def test_dedup_statement_worked_example():
+    title = "Attention Is All You Need"
+    entries = [
+        _entry(1, "vaswani2017", title=title, authors=["A. Vaswani"], year=2017),
+        _entry(2, "vit_transformer", title=title, authors=["A. Vaswani"], year=2017, doi="10.1000/abc"),
+        _entry(3, "vit_transformer", title=title, authors=["A. Vaswani"]),
+    ]
+    rows, aliases, conflicts = deduplicate_entries(entries)
+    assert rows == [{
+        "arxiv_id": "2510.19401", "citation_key": "vit_transformer", "entry_type": "misc", "title": title,
+        "authors": ["A. Vaswani"], "year": 2017, "doi": "10.1000/abc", "journal": None, "url": None,
+    }]
+    assert aliases == [{"arxiv_id": "2510.19401", "alias_key": "vaswani2017", "canonical_key": "vit_transformer"}]
+    assert conflicts == []
+
+
+def test_dedup_does_not_merge_different_years_or_short_titles():
+    entries = [
+        _entry(1, "a", title="A Survey of Deep Learning Methods", year=2015),
+        _entry(1, "b", title="A Survey of Deep Learning Methods", year=2021, order=1),
+        _entry(1, "c", title="Intro", order=2),
+        _entry(1, "d", title="Intro", order=3),
+    ]
+    rows, aliases, _ = deduplicate_entries(entries)
+    assert sorted(r["citation_key"] for r in rows) == ["a", "b", "c", "d"]
+    assert aliases == []
+
+
+def test_dedup_records_field_conflicts_and_prefers_latest_version():
+    entries = [
+        _entry(1, "k", title="Same Reference Title Here", journal="Old Venue"),
+        _entry(2, "k", title="Same Reference Title Here", journal="New Venue"),
+    ]
+    rows, _, conflicts = deduplicate_entries(entries)
+    assert rows[0]["journal"] == "New Venue"
+    assert conflicts == [{"arxiv_id": "2510.19401", "citation_key": "k", "field": "journal",
+                          "chosen": "New Venue", "dropped": ["Old Venue"]}]
