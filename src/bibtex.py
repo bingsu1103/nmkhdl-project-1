@@ -299,3 +299,68 @@ def collect_version_entries(source_dir: str | Path, reachable_files: list[str]) 
                     continue
                 entries.append({**entry, "origin": "bibitem", "source_file": rel, "raw": raw, "warnings": warns})
     return entries, diagnostics
+
+
+# ---------------------------------------------------------------- dedup across versions
+
+def _norm_title(title: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode().lower())
+
+
+def deduplicate_entries(entries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Merge entries of ONE publication referring to the same work.
+
+    Same citation key, same DOI, or same normalized title (>= 20 chars, years not
+    contradicting) means same reference. The key used in the latest version wins;
+    fields are unioned with latest-version priority and conflicts are recorded.
+    Returns (unified rows, alias rows, conflict rows).
+    """
+    parent = list(range(len(entries)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def same_year(a: dict, b: dict) -> bool:
+        return a["year"] is None or b["year"] is None or a["year"] == b["year"]
+
+    first_by: dict[tuple, int] = {}
+    for i, e in enumerate(entries):
+        keys = [("key", e["citation_key"])]
+        if e["doi"]:
+            keys.append(("doi", e["doi"].lower()))
+        t = _norm_title(e["title"])
+        if len(t) >= 20 and "title_from_raw" not in e.get("warnings", []):
+            keys.append(("title", t))
+        for k in keys:
+            j = first_by.setdefault(k, i)
+            if j != i and (k[0] != "title" or same_year(entries[i], entries[j])):
+                parent[find(i)] = find(j)
+
+    groups: dict[int, list[int]] = {}
+    for i in range(len(entries)):
+        groups.setdefault(find(i), []).append(i)
+
+    rows, aliases, conflicts = [], [], []
+    for members in groups.values():
+        # latest version first; inside a version keep file order
+        ordered = sorted((entries[i] for i in members), key=lambda e: (-e["version"], e["order"]))
+        canonical = ordered[0]["citation_key"]
+        row: dict[str, Any] = {"arxiv_id": ordered[0]["arxiv_id"], "citation_key": canonical}
+        for field in ("entry_type", "title", "authors", "year", "doi", "journal", "url"):
+            values = [e[field] for e in ordered if e[field] not in (None, "", [])]
+            if field == "title":  # a real title beats raw-text fallback
+                values = [e[field] for e in ordered if e[field] and "title_from_raw" not in e.get("warnings", [])] or values
+            if field == "entry_type":  # misc is the "unknown" default
+                values = [v for v in values if v != "misc"] or values
+            row[field] = values[0] if values else ([] if field == "authors" else None)
+            distinct = {json.dumps(v, ensure_ascii=False).lower() for v in values}
+            if len(distinct) > 1 and field != "entry_type":
+                conflicts.append({"arxiv_id": row["arxiv_id"], "citation_key": canonical, "field": field, "chosen": row[field], "dropped": values[1:]})
+        rows.append(row)
+        for alias in sorted({e["citation_key"] for e in ordered} - {canonical}):
+            aliases.append({"arxiv_id": row["arxiv_id"], "alias_key": alias, "canonical_key": canonical})
+    rows.sort(key=lambda r: r["citation_key"])
+    return rows, aliases, conflicts
