@@ -1,7 +1,11 @@
+import pytest
+
 from src.bibtex import (
     clean_latex,
+    convert_bibitem,
     entry_from_bib,
     parse_bib_file,
+    parse_bibitems,
 )
 
 
@@ -47,3 +51,45 @@ def test_bib_eprint_becomes_arxiv_url():
 def test_clean_latex_accents_and_formatting():
     assert clean_latex(r"\emph{Deep} {L}earning --- Gr\"{o}{\ss}e \& Co.~\cite{x}") == "Deep Learning — Größe & Co. x"
     assert clean_latex(None) == ""
+
+
+# ---------------------------------------------------------------- \bibitem conversion
+
+@pytest.mark.parametrize("raw, expected", [
+    (r"""A.~Vaswani, N.~Shazeer, and J.~Smith.
+\newblock Attention is all you need.
+\newblock In \emph{Advances in NeurIPS}, pages 5998--6008, 2017.""",
+     dict(entry_type="inproceedings", title="Attention is all you need",
+          authors=["A. Vaswani", "N. Shazeer", "J. Smith"], year=2017)),
+    (r"K. He and J. Sun, ``Deep residual learning,'' in \textit{Proc. CVPR}, 2016. doi:10.1109/CVPR.2016.90",
+     dict(entry_type="inproceedings", title="Deep residual learning", authors=["K. He", "J. Sun"],
+          year=2016, doi="10.1109/CVPR.2016.90", journal="Proc. CVPR, 2016")),
+    (r"Devlin, J., Chang, M., Lee, K. BERT: Pre-training of transformers. arXiv:1810.04805, 2018.",
+     dict(entry_type="misc", title="BERT: Pre-training of transformers",
+          authors=["J. Devlin", "M. Chang", "K. Lee"], year=2018, url="https://arxiv.org/abs/1810.04805")),
+    (r"Smith, J. A study of {\"U}bung. Journal of Research in Learning, 12(3):1--10, 2019.",
+     dict(entry_type="article", title="A study of Übung", authors=["J. Smith"], year=2019)),
+])
+def test_convert_bibitem_styles(raw, expected):
+    entry, _ = convert_bibitem("k", raw)
+    for field, value in expected.items():
+        assert entry[field] == value, field
+
+
+def test_bibitem_without_structure_keeps_raw_text_as_title():
+    entry, warnings = convert_bibitem("w", r"{\em Some notes}")
+    assert entry["title"] == "Some notes"
+    assert entry["authors"] == [] and entry["year"] is None
+    assert "title_from_raw" in warnings
+
+
+def test_parse_bibitems_optional_labels_and_multiline():
+    block = r"""{99}
+\bibitem[{Vaswani et~al.(2017)}]{vas}
+  A. Vaswani.
+  \newblock Attention.
+\bibitem[Ho]{ho} J. Ho. Diffusion. 2020.
+"""
+    items = parse_bibitems(block)
+    assert [k for k, _ in items] == ["vas", "ho"]
+    assert "Attention" in items[0][1] and "Diffusion" in items[1][1]
