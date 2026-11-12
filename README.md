@@ -416,11 +416,14 @@ Output nằm ngoài Git:
 
 `element_id` được tạo deterministically từ publication, kind và cleaned content; nội dung giống hệt trong các version dùng chung một ID, còn `hierarchy` giữ edge riêng theo version. References section bị loại khỏi hierarchy; acknowledgements/appendices vẫn được giữ theo đề.
 
-### Build và validate ba bảng M2
+### Standardize, build và validate ba bảng M2
 
-Chỉ chạy khi adapter Member 3 đã tạo `parsed/bibtex.jsonl`. Pipeline cố ý fail nếu thiếu file này, không tạo placeholder để vượt gate giả:
+Adapter Member 3 đã được tích hợp. Có thể chạy từng stage để debug:
 
 ```bash
+.venv/bin/python -m src.cli standardize \
+  --data-dir ../nmkhdl-project-1-data
+
 .venv/bin/python -m src.cli build-parsing-tables \
   --data-dir ../nmkhdl-project-1-data
 
@@ -428,11 +431,19 @@ Chỉ chạy khi adapter Member 3 đã tạo `parsed/bibtex.jsonl`. Pipeline c�
   --data-dir ../nmkhdl-project-1-data
 ```
 
-Ba bảng được ghi vào `tables/elements`, `tables/hierarchy`, `tables/bibtex`. Validation kiểm tra schema, content dedup, tree root/cycle/orphan/parent integrity, BibTeX key uniqueness và publication-version coverage.
+Hoặc chạy workflow M2 end-to-end bằng một lệnh:
+
+```bash
+caffeinate -i .venv/bin/python -m src.cli run-parsing \
+  --data-dir ../nmkhdl-project-1-data \
+  --member member-1
+```
+
+Workflow thực hiện parse → BibTeX standardization/dedup → build tables → validation và ghi `manifests/parsing/m2_run_summary.json`. Ba bảng được ghi vào `tables/elements`, `tables/hierarchy`, `tables/bibtex`. Validation kiểm tra schema, content dedup, tree root/cycle/orphan/parent integrity, BibTeX key uniqueness và publication-version coverage. Nếu thiếu adapter output thật, pipeline fail thay vì tạo placeholder.
 
 ### Benchmark parser
 
-Benchmark chính thức phải chạy trên Google Colab CPU-only và không reuse parse checkpoint:
+Benchmark chính thức phải chạy trên Google Colab CPU-only và không reuse parse checkpoint. Lệnh benchmark chạy đủ parse, standardize, build tables và validation:
 
 ```bash
 .venv/bin/python -m src.cli benchmark-parsing \
