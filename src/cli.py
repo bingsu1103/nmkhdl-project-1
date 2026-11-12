@@ -483,13 +483,25 @@ def _standardize_parsing(args: argparse.Namespace) -> int:
 
 def _run_parsing(args: argparse.Namespace) -> int:
     data_dir = _external_data_dir(args.data_dir)
-    result = _run_m2_stages(
-        data_dir=data_dir,
-        member=args.member,
-        paper_ids=set(args.paper),
-        resume=not args.no_resume,
-    )
     output = data_dir / "manifests/parsing/m2_run_summary.json"
+    try:
+        result = _run_m2_stages(
+            data_dir=data_dir,
+            member=args.member,
+            paper_ids=set(args.paper),
+            resume=not args.no_resume,
+        )
+    except (Milestone2IntegrationError, OSError, ValueError) as exc:
+        _write_json_atomic(
+            output,
+            {
+                "is_success": False,
+                "error_type": type(exc).__name__,
+                "error_message": str(exc),
+                "failed_stage": "m2_workflow",
+            },
+        )
+        raise
     _write_json_atomic(output, result)
     print(
         json.dumps(

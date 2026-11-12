@@ -6,6 +6,8 @@ import io
 import json
 from pathlib import Path
 
+import pytest
+
 from src.cli import main
 
 
@@ -86,3 +88,56 @@ This is a complete sentence.
     assert (tmp_path / "tables/elements/part-00000.parquet").is_file()
     assert (tmp_path / "tables/hierarchy/part-00000.parquet").is_file()
     assert (tmp_path / "tables/bibtex/part-00000.parquet").is_file()
+
+
+def test_run_parsing_persists_failure_summary_before_cli_error(tmp_path: Path) -> None:
+    tasks = tmp_path / "manifests/discovery/version_tasks.csv"
+    tasks.parent.mkdir(parents=True)
+    tasks.write_text(
+        "member_id,arxiv_id,versioned_arxiv_id,version\n"
+        "member-1,2509.16047,2509.16047v1,1\n",
+        encoding="utf-8",
+    )
+    status = {
+        "member_id": "member-1",
+        "arxiv_id": "2509.16047",
+        "versioned_arxiv_id": "2509.16047v1",
+        "version": 1,
+        "status": "success",
+        "download": {"sha256": "archive"},
+        "extraction": {"files": [{"path": "main.tex", "sha256": "main"}]},
+    }
+    (tmp_path / "manifests/source_status.jsonl").write_text(
+        json.dumps(status) + "\n", encoding="utf-8"
+    )
+    source = tmp_path / "corpus/tex/2509.16047/2509.16047v1"
+    source.mkdir(parents=True)
+    (source / "main.tex").write_text(
+        r"\documentclass{article}\begin{document}Text.\bibliography{refs}\end{document}",
+        encoding="utf-8",
+    )
+    (source / "refs.bib").write_text(
+        "@article{missing_title, author={Example, Alice}, year={2020}}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        main(
+            [
+                "run-parsing",
+                "--data-dir",
+                str(tmp_path),
+                "--member",
+                "member-1",
+            ]
+        )
+
+    assert raised.value.code == 2
+    failure = json.loads(
+        (tmp_path / "manifests/parsing/m2_run_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["is_success"] is False
+    assert failure["error_type"] == "ValueError"
+    assert "title" in failure["error_message"]
