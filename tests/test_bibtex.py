@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from src.bibtex import (
@@ -8,7 +10,10 @@ from src.bibtex import (
     entry_from_bib,
     parse_bib_file,
     parse_bibitems,
+    run_bibtex_stage,
 )
+from src.storage import BIBTEX_SCHEMA, create_table_from_records
+from src.validate import validate_bibtex_table
 
 
 # ---------------------------------------------------------------- .bib parsing
@@ -184,3 +189,36 @@ def test_dedup_records_field_conflicts_and_prefers_latest_version():
     assert rows[0]["journal"] == "New Venue"
     assert conflicts == [{"arxiv_id": "2510.19401", "citation_key": "k", "field": "journal",
                           "chosen": "New Venue", "dropped": ["Old Venue"]}]
+
+
+# ---------------------------------------------------------------- stage end-to-end
+
+def test_run_bibtex_stage_output_passes_m4_validator(tmp_path):
+    def version_dir(v):
+        return tmp_path / "corpus" / "tex" / "2510.19401" / f"2510.19401v{v}"
+
+    _write(version_dir(1) / "main.tex", "\\documentclass{article}\\bibliography{refs}")
+    _write(version_dir(1) / "refs.bib", "@article{vaswani2017, title={Attention Is All You Need}, author={Vaswani, Ashish}, year={2017}}")
+    _write(version_dir(2) / "main.tex", "\\documentclass{article}\\begin{thebibliography}{1}"
+           "\\bibitem{vit_transformer} A.~Vaswani.\n\\newblock Attention is all you need.\n\\newblock arXiv preprint, 2017. doi:10.1000/abc\n"
+           "\\end{thebibliography}")
+    inputs = [
+        {"arxiv_id": "2510.19401", "versioned_arxiv_id": f"2510.19401v{v}", "version": v,
+         "source_dir": f"corpus/tex/2510.19401/2510.19401v{v}"} for v in (1, 2)
+    ] + [{"arxiv_id": "2510.19401", "versioned_arxiv_id": "2510.19401v3", "version": 3, "source_dir": None}]
+    statuses = [
+        {"arxiv_id": "2510.19401", "versioned_arxiv_id": f"2510.19401v{v}", "version": v,
+         "status": "success", "reachable_files": ["main.tex"]} for v in (1, 2)
+    ] + [{"arxiv_id": "2510.19401", "versioned_arxiv_id": "2510.19401v3", "version": 3, "status": "no_tex_bib", "reachable_files": []}]
+    _write(tmp_path / "manifests" / "parsing" / "m2_inputs.jsonl", "".join(json.dumps(r) + "\n" for r in inputs))
+    _write(tmp_path / "parsed" / "parse_status.jsonl", "".join(json.dumps(r) + "\n" for r in statuses))
+
+    summary = run_bibtex_stage(data_dir=tmp_path)
+
+    assert summary["raw_entries"] == 2 and summary["unified_entries"] == 1
+    assert summary["renamed_keys"] == 1 and summary["versions_skipped"] == 1
+    rows = [json.loads(line) for line in (tmp_path / "parsed" / "bibtex.jsonl").read_text().splitlines()]
+    assert rows[0]["citation_key"] == "vit_transformer" and rows[0]["doi"] == "10.1000/abc" and rows[0]["year"] == 2017
+    table = create_table_from_records(rows, BIBTEX_SCHEMA)
+    report = validate_bibtex_table(table)
+    assert report.is_valid, report.to_dict()

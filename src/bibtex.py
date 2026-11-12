@@ -364,3 +364,84 @@ def deduplicate_entries(entries: list[dict[str, Any]]) -> tuple[list[dict[str, A
             aliases.append({"arxiv_id": row["arxiv_id"], "alias_key": alias, "canonical_key": canonical})
     rows.sort(key=lambda r: r["citation_key"])
     return rows, aliases, conflicts
+
+
+# ---------------------------------------------------------------- stage runner
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("".join(json.dumps(r, ensure_ascii=False, sort_keys=True) + "\n" for r in rows), encoding="utf-8")
+    tmp.replace(path)
+
+
+def run_bibtex_stage(*, data_dir: str | Path) -> dict[str, Any]:
+    """Read M2 parser outputs, write parsed/bibtex*.jsonl and a summary with dedup metrics."""
+    root = Path(data_dir)
+    inputs = {r["versioned_arxiv_id"]: r for r in _read_jsonl(root / "manifests" / "parsing" / "m2_inputs.jsonl")}
+    statuses = _read_jsonl(root / "parsed" / "parse_status.jsonl")
+
+    by_paper: dict[str, list[dict[str, Any]]] = {}
+    raw_rows: list[dict[str, Any]] = []
+    version_rows: list[dict[str, Any]] = []
+    for st in statuses:
+        arxiv_id, version = st["arxiv_id"], int(st["version"])
+        by_paper.setdefault(arxiv_id, [])
+        source_dir = inputs.get(st["versioned_arxiv_id"], {}).get("source_dir")
+        if st["status"] not in PARSED_STATUSES or not source_dir:
+            version_rows.append({"arxiv_id": arxiv_id, "version": version, "status": "skipped", "parse_status": st["status"], "raw_entries": 0, "diagnostics": []})
+            continue
+        entries, diagnostics = collect_version_entries(root / source_dir, st.get("reachable_files") or [])
+        for order, e in enumerate(entries):
+            e.update(arxiv_id=arxiv_id, version=version, order=order)
+        by_paper[arxiv_id] += entries
+        raw_rows += entries
+        version_rows.append({"arxiv_id": arxiv_id, "version": version, "status": "ok" if entries else "empty", "parse_status": st["status"], "raw_entries": len(entries), "diagnostics": diagnostics})
+
+    unified, aliases, conflicts = [], [], []
+    for arxiv_id in sorted(by_paper):
+        rows, al, co = deduplicate_entries(by_paper[arxiv_id])
+        unified += rows
+        aliases += al
+        conflicts += co
+
+    out = root / "parsed"
+    out.mkdir(parents=True, exist_ok=True)
+    _write_jsonl_atomic(out / "bibtex.jsonl", [{k: r[k] for k in TABLE_FIELDS} for r in unified])
+    _write_jsonl_atomic(out / "bibtex_raw.jsonl", raw_rows)
+    _write_jsonl_atomic(out / "bibtex_aliases.jsonl", aliases)
+    _write_jsonl_atomic(out / "bibtex_conflicts.jsonl", conflicts)
+    _write_jsonl_atomic(out / "bibtex_status.jsonl", version_rows)
+
+    summary = {
+        "versions_total": len(version_rows),
+        "versions_with_entries": sum(v["status"] == "ok" for v in version_rows),
+        "versions_empty": sum(v["status"] == "empty" for v in version_rows),
+        "versions_skipped": sum(v["status"] == "skipped" for v in version_rows),
+        "raw_entries": len(raw_rows),
+        "raw_from_bib": sum(e["origin"] == "bib" for e in raw_rows),
+        "raw_from_bibitem": sum(e["origin"] == "bibitem" for e in raw_rows),
+        "unified_entries": len(unified),
+        "merged_away": len(raw_rows) - len(unified),
+        "renamed_keys": len(aliases),
+        "field_conflicts": len(conflicts),
+        "title_from_raw": sum("title_from_raw" in e["warnings"] for e in raw_rows),
+        "missing_bib_files": sum(d.startswith("missing_bib:") for v in version_rows for d in v["diagnostics"]),
+    }
+    (out / "bibtex_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return summary
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Build parsed/bibtex.jsonl from M2 parser outputs.")
+    parser.add_argument("--data-dir", type=Path, required=True)
+    args = parser.parse_args(argv)
+    print(json.dumps(run_bibtex_stage(data_dir=args.data_dir), indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
