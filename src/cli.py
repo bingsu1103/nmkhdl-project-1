@@ -36,6 +36,7 @@ from .source_pipeline import run_source_pipeline
 from .storage import PAPERS_SCHEMA, REFERENCES_SCHEMA, read_sharded_parquet
 from .validate import compute_crawl_statistics
 from .parse_pipeline import run_parse_pipeline
+from .bibtex import run_bibtex_stage
 from .m2_contracts import ParsingContractError
 from .m2_integration import (
     Milestone2IntegrationError,
@@ -162,6 +163,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate_parsing.add_argument("--data-dir", type=Path, required=True)
     validate_parsing.set_defaults(handler=_validate_parsing)
+
+    standardize = subparsers.add_parser(
+        "standardize",
+        help="Extract, normalize and deduplicate BibTeX across parsed versions.",
+    )
+    standardize.add_argument("--data-dir", type=Path, required=True)
+    standardize.set_defaults(handler=_standardize_parsing)
+
+    run_parsing = subparsers.add_parser(
+        "run-parsing",
+        help="Run M2 parse, standardize, table build and validation gates.",
+    )
+    _add_m2_parse_arguments(run_parsing)
+    run_parsing.set_defaults(handler=_run_parsing)
 
     benchmark_parsing = subparsers.add_parser(
         "benchmark-parsing",
@@ -460,6 +475,33 @@ def _build_parsing_tables(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _standardize_parsing(args: argparse.Namespace) -> int:
+    summary = run_bibtex_stage(data_dir=_external_data_dir(args.data_dir))
+    print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
+def _run_parsing(args: argparse.Namespace) -> int:
+    data_dir = _external_data_dir(args.data_dir)
+    result = _run_m2_stages(
+        data_dir=data_dir,
+        member=args.member,
+        paper_ids=set(args.paper),
+        resume=not args.no_resume,
+    )
+    output = data_dir / "manifests/parsing/m2_run_summary.json"
+    _write_json_atomic(output, result)
+    print(
+        json.dumps(
+            {**result, "run_summary": str(output)},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return EXIT_OK if result["is_success"] else EXIT_PARTIAL_FAILURE
+
+
 def _validate_parsing(args: argparse.Namespace) -> int:
     report = validate_m2_tables(data_dir=_external_data_dir(args.data_dir))
     print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
@@ -476,9 +518,9 @@ def _benchmark_parsing(args: argparse.Namespace) -> int:
     started = time.monotonic()
     monitor.start()
     try:
-        summary = run_parse_pipeline(
+        workflow_result = _run_m2_stages(
             data_dir=data_dir,
-            member_id=args.member,
+            member=args.member,
             paper_ids=set(args.paper),
             resume=False,
         )
@@ -492,7 +534,7 @@ def _benchmark_parsing(args: argparse.Namespace) -> int:
         }
     )
     result = {
-        "parser": summary,
+        "workflow": workflow_result,
         "performance": {
             **resources,
             "end_to_end_wall_time_sec": elapsed,
@@ -505,7 +547,48 @@ def _benchmark_parsing(args: argparse.Namespace) -> int:
     output = data_dir / "metrics/m2_parsing_benchmark.json"
     _write_json_atomic(output, result)
     print(json.dumps({**result, "output": str(output)}, ensure_ascii=False, indent=2, sort_keys=True))
-    return EXIT_OK if summary["failed_or_partial"] == 0 else EXIT_PARTIAL_FAILURE
+    return EXIT_OK if workflow_result["is_success"] else EXIT_PARTIAL_FAILURE
+
+
+def _run_m2_stages(
+    *,
+    data_dir: Path,
+    member: str | None,
+    paper_ids: set[str],
+    resume: bool,
+) -> dict[str, object]:
+    stage_durations: dict[str, float] = {}
+    started = time.monotonic()
+    parser_summary = run_parse_pipeline(
+        data_dir=data_dir,
+        member_id=member,
+        paper_ids=paper_ids,
+        resume=resume,
+    )
+    stage_durations["parse_seconds"] = round(time.monotonic() - started, 4)
+
+    stage_started = time.monotonic()
+    bibtex_summary = run_bibtex_stage(data_dir=data_dir)
+    stage_durations["standardize_seconds"] = round(
+        time.monotonic() - stage_started, 4
+    )
+
+    stage_started = time.monotonic()
+    table_summary = build_m2_tables(data_dir=data_dir)
+    validation = validate_m2_tables(data_dir=data_dir)
+    stage_durations["tables_and_validation_seconds"] = round(
+        time.monotonic() - stage_started, 4
+    )
+    stage_durations["total_seconds"] = round(time.monotonic() - started, 4)
+    return {
+        "is_success": parser_summary["failed_or_partial"] == 0
+        and bool(validation["is_valid"]),
+        "parser": parser_summary,
+        "standardization": bibtex_summary,
+        "tables": table_summary,
+        "validation": validation,
+        "stage_durations": stage_durations,
+    }
 
 
 def _crawl_references(args: argparse.Namespace) -> int:

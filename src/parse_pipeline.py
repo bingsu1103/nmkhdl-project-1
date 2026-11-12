@@ -14,6 +14,10 @@ from .m2_contracts import build_parsing_inputs, write_parsing_contract
 
 
 PARSER_SCHEMA_VERSION = "m2-parser-v1"
+FINAL_KIND_MAP = {
+    "block_formula": "formula",
+    "list_item": "item",
+}
 
 
 def run_parse_pipeline(
@@ -191,14 +195,15 @@ def _assemble_tables(
         nodes = [Element(**payload) for payload in result["elements"]]
         for node in nodes:
             occurrences += 1
-            key = (result["arxiv_id"], node.kind, node.content)
+            final_kind = FINAL_KIND_MAP.get(node.kind, node.kind)
+            key = (result["arxiv_id"], final_kind, node.content)
             element_id = canonical.get(key)
             if element_id is None:
                 element_id = _content_element_id(*key)
                 candidate = {
                     "element_id": element_id,
                     "arxiv_id": result["arxiv_id"],
-                    "kind": node.kind,
+                    "kind": final_kind,
                     "content": node.content,
                 }
                 prior = element_payloads.get(element_id)

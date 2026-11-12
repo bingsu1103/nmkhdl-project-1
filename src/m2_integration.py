@@ -76,21 +76,31 @@ def validate_m2_tables(*, data_dir: str | Path) -> dict[str, Any]:
         ),
         validate_bibtex_table(bibtex, papers_table=papers),
     ]
+    m2_inputs = _read_jsonl(root / "manifests/parsing/m2_inputs.jsonl")
     parse_status = _read_jsonl(root / "parsed/parse_status.jsonl")
-    version_keys = {
-        (str(row["arxiv_id"]), int(row["version"])) for row in parse_status
-    }
-    duplicate_statuses = len(parse_status) - len(version_keys)
+    expected_keys = [str(row["versioned_arxiv_id"]) for row in m2_inputs]
+    actual_keys = [str(row["versioned_arxiv_id"]) for row in parse_status]
+    duplicate_inputs = len(expected_keys) - len(set(expected_keys))
+    duplicate_statuses = len(actual_keys) - len(set(actual_keys))
+    missing_statuses = sorted(set(expected_keys) - set(actual_keys))
+    unexpected_statuses = sorted(set(actual_keys) - set(expected_keys))
     result = {
         "is_valid": all(report.is_valid for report in reports)
-        and duplicate_statuses == 0,
+        and duplicate_inputs == 0
+        and duplicate_statuses == 0
+        and not missing_statuses
+        and not unexpected_statuses,
         "table_reports": {
             report.table_name: report.to_dict() for report in reports
         },
         "version_coverage": {
+            "expected_version_records": len(expected_keys),
             "parse_status_records": len(parse_status),
-            "unique_publication_versions": len(version_keys),
+            "unique_publication_versions": len(set(actual_keys)),
+            "duplicate_input_records": duplicate_inputs,
             "duplicate_status_records": duplicate_statuses,
+            "missing_versioned_arxiv_ids": missing_statuses,
+            "unexpected_versioned_arxiv_ids": unexpected_statuses,
         },
     }
     _write_json_atomic(root / "tables/m2_validation_report.json", result)

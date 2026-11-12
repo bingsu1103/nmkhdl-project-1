@@ -50,10 +50,21 @@ def test_build_and_validate_m2_tables(tmp_path: Path) -> None:
     )
     _write_jsonl(tmp_path / "parsed/bibtex.jsonl", [])
     _write_jsonl(
+        tmp_path / "manifests/parsing/m2_inputs.jsonl",
+        [
+            {
+                "arxiv_id": "2509.16047",
+                "versioned_arxiv_id": "2509.16047v1",
+                "version": 1,
+            }
+        ],
+    )
+    _write_jsonl(
         tmp_path / "parsed/parse_status.jsonl",
         [
             {
                 "arxiv_id": "2509.16047",
+                "versioned_arxiv_id": "2509.16047v1",
                 "version": 1,
                 "status": "success",
             }
@@ -65,6 +76,31 @@ def test_build_and_validate_m2_tables(tmp_path: Path) -> None:
     report = validate_m2_tables(data_dir=tmp_path)
     assert report["is_valid"] is True
     assert report["version_coverage"]["unique_publication_versions"] == 1
+
+
+def test_validate_m2_tables_rejects_missing_version_status(tmp_path: Path) -> None:
+    _write_jsonl(tmp_path / "parsed/elements.jsonl", [])
+    _write_jsonl(tmp_path / "parsed/hierarchy.jsonl", [])
+    _write_jsonl(tmp_path / "parsed/bibtex.jsonl", [])
+    _write_jsonl(
+        tmp_path / "manifests/parsing/m2_inputs.jsonl",
+        [
+            {
+                "arxiv_id": "2509.16047",
+                "versioned_arxiv_id": "2509.16047v1",
+                "version": 1,
+            }
+        ],
+    )
+    _write_jsonl(tmp_path / "parsed/parse_status.jsonl", [])
+    build_m2_tables(data_dir=tmp_path)
+
+    report = validate_m2_tables(data_dir=tmp_path)
+
+    assert report["is_valid"] is False
+    assert report["version_coverage"]["missing_versioned_arxiv_ids"] == [
+        "2509.16047v1"
+    ]
 
 
 def test_build_m2_tables_refuses_missing_bibtex_adapter(tmp_path: Path) -> None:
