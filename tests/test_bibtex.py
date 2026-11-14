@@ -76,6 +76,8 @@ def test_clean_latex_accents_and_formatting():
     (r"Devlin, J., Chang, M., Lee, K. BERT: Pre-training of transformers. arXiv:1810.04805, 2018.",
      dict(entry_type="misc", title="BERT: Pre-training of transformers",
           authors=["J. Devlin", "M. Chang", "K. Lee"], year=2018, url="https://arxiv.org/abs/1810.04805")),
+    (r"""R. He \emph{et al.}, ``5G for railways: next generation communications," \emph{IEEE Commun. Mag.}, vol. 60, 2022.""",
+     dict(entry_type="article", title="5G for railways: next generation communications", year=2022)),
     (r"Smith, J. A study of {\"U}bung. Journal of Research in Learning, 12(3):1--10, 2019.",
      dict(entry_type="article", title="A study of Übung", authors=["J. Smith"], year=2019)),
 ])
@@ -143,6 +145,15 @@ def test_collect_malformed_bibitem_does_not_drop_others(tmp_path, monkeypatch):
     entries, diagnostics = collect_version_entries(tmp_path, ["main.tex"])
     assert [e["citation_key"] for e in entries] == ["ok1", "ok2"]
     assert diagnostics == ["bibitem_error:bad:ValueError"]
+
+
+def test_collect_keeps_items_sharing_one_key_apart(tmp_path):
+    # real case 2510.19401: 34 items all use \bibitem{IEEEhowto:kopka}
+    _write(tmp_path / "main.tex", "\\begin{thebibliography}{9}\\bibitem{k} A. First title here. 2001."
+           "\\bibitem{k} B. Second title here. 2002.\\bibitem{k} C. Third title here. 2003.\\end{thebibliography}")
+    entries, _ = collect_version_entries(tmp_path, ["main.tex"])
+    assert [e["citation_key"] for e in entries] == ["k", "k__2", "k__3"]
+    assert "duplicate_key_in_version" in entries[1]["warnings"]
 
 
 # ---------------------------------------------------------------- dedup

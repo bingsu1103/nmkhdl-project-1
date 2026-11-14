@@ -214,7 +214,7 @@ def _guess_type(venue: str) -> str:
         return "inproceedings"
     if re.search(r"arxiv|preprint", v):
         return "misc"
-    if re.search(r"journal|trans\.|transactions|letters|review|\d+\s*\(\d+\)", v):
+    if re.search(r"journal|trans\.|transactions|letters|review|\d+\s*\(\d+\)|\bvol\.\s*\d", v):  # IEEE: "vol. 60"
         return "article"
     return "misc"
 
@@ -230,7 +230,7 @@ def convert_bibitem(key: str, raw: str) -> tuple[dict[str, Any], list[str]]:
         url = f"https://arxiv.org/abs/{arxiv.group(1)}"
     body = _URL_RE.sub(" ", _DOI_RE.sub(" ", raw))
 
-    quoted = re.search(r"``(.+?)''|\"(.+?)\"", body, re.S)
+    quoted = re.search(r"``(.+?)(?:''|\")|\"(.+?)\"", body, re.S)  # IEEE often closes ``Title," with "
     if "\\newblock" in body:  # plain/natbib .bbl layout: authors \newblock title \newblock venue
         blocks = [clean_latex(b).strip(" .,") for b in body.split("\\newblock")]
         authors_txt, title, venue = blocks[0], blocks[1] if len(blocks) > 1 else "", " ".join(blocks[2:])
@@ -298,6 +298,13 @@ def collect_version_entries(source_dir: str | Path, reachable_files: list[str]) 
                     diagnostics.append(f"bibitem_error:{key}:{type(exc).__name__}")
                     continue
                 entries.append({**entry, "origin": "bibitem", "source_file": rel, "raw": raw, "warnings": warns})
+    # Some sources reuse one key for many items (template leftovers); keep them apart so dedup does not merge them.
+    counts: dict[str, int] = {}
+    for e in entries:
+        n = counts[e["citation_key"]] = counts.get(e["citation_key"], 0) + 1
+        if n > 1:
+            e["citation_key"] = f"{e['citation_key']}__{n}"
+            e["warnings"] = [*e["warnings"], "duplicate_key_in_version"]
     return entries, diagnostics
 
 
