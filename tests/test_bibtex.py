@@ -41,6 +41,7 @@ def test_parse_bib_braces_quotes_concat_and_macros():
         "citation_key": "vaswani2017", "entry_type": "inproceedings",
         "title": "Attention is All you Need", "authors": ["Ashish Vaswani", "Noam Shazeer"],
         "year": 2017, "doi": "10.5555/3295222.3295349", "journal": "NeurIPS 2017", "url": None,
+        "warnings": [],
     }
     assert mul["title"] == "Müller's Study"
     assert mul["authors"] == ["Jörg Müller"]
@@ -55,6 +56,15 @@ def test_parse_bib_unclosed_entry_keeps_previous_entries():
 def test_bib_eprint_becomes_arxiv_url():
     raws, _ = parse_bib_file("@misc{x, title={T}, eprint={1810.04805}, archivePrefix={arXiv}}")
     assert entry_from_bib(raws[0])["url"] == "https://arxiv.org/abs/1810.04805"
+
+
+def test_bib_entry_without_title_falls_back_to_other_fields():
+    # real case 2510.19418: @article{1984:1040142, journal=..., year=1984} has no title
+    raws, _ = parse_bib_file("@article{1984:1040142, journal={SIGCOMM Comput. Commun. Rev.}, year={1984}}\n@misc{empty,}")
+    with_fields, empty = (entry_from_bib(r) for r in raws)
+    assert with_fields["title"] == "SIGCOMM Comput. Commun. Rev., 1984"
+    assert with_fields["warnings"] == ["title_from_raw"]
+    assert empty["title"] == "empty"
 
 
 def test_clean_latex_accents_and_formatting():
@@ -78,6 +88,13 @@ def test_clean_latex_accents_and_formatting():
           authors=["J. Devlin", "M. Chang", "K. Lee"], year=2018, url="https://arxiv.org/abs/1810.04805")),
     (r"""R. He \emph{et al.}, ``5G for railways: next generation communications," \emph{IEEE Commun. Mag.}, vol. 60, 2022.""",
      dict(entry_type="article", title="5G for railways: next generation communications", year=2022)),
+    # real cases: page numbers 2062 / 2074 were read as the year
+    (r"P. Arnold, {\sl Weakly first-order phase transitions}, Phys.\ Rev.\ Lett.\ {\bf 78}, 2062 (1997).",
+     dict(year=1997)),
+    (r"""R.~B. Lazarus.
+\newblock Self-similar solutions for converging shocks.
+\newblock {\em Physics of Fluids}, 24(11):2074--2081, 1981.""",
+     dict(year=1981, title="Self-similar solutions for converging shocks")),
     (r"Smith, J. A study of {\"U}bung. Journal of Research in Learning, 12(3):1--10, 2019.",
      dict(entry_type="article", title="A study of Übung", authors=["J. Smith"], year=2019)),
 ])
@@ -92,6 +109,7 @@ def test_bibitem_without_structure_keeps_raw_text_as_title():
     assert entry["title"] == "Some notes"
     assert entry["authors"] == [] and entry["year"] is None
     assert "title_from_raw" in warnings
+    assert convert_bibitem("dfu2021", "")[0]["title"] == "dfu2021"  # real empty \bibitem in 2510.22743
 
 
 def test_parse_bibitems_optional_labels_and_multiline():
