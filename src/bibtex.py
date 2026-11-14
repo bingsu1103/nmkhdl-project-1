@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 import unicodedata
+from datetime import date
 from pathlib import Path
 from typing import Any, Optional
 
@@ -28,6 +29,12 @@ _FIELD_NAME_RE = re.compile(r"\s*,?\s*([A-Za-z][\w\-:.]*)\s*=\s*")
 _BARE_VALUE_RE = re.compile(r"[^,#\s{}\"]+")
 _CONCAT_RE = re.compile(r"\s*#\s*")
 _YEAR_RE = re.compile(r"(?<![\d./])((?:18|19|20)\d\d)(?!\d|\.\d)")
+_MAX_YEAR = date.today().year + 1  # page numbers like 2062 look like years
+
+
+def _find_year(text: str, last: bool = False) -> Optional[int]:
+    years = [int(m.group(1)) for m in _YEAR_RE.finditer(text) if int(m.group(1)) <= _MAX_YEAR]
+    return (years[-1] if last else years[0]) if years else None
 _DOI_RE = re.compile(r"10\.\d{4,9}/[^\s{}\"',;]+")
 _URL_RE = re.compile(r"\\(?:url|href)\s*\{([^{}]+)\}|(https?://[^\s{}]+)")
 _ARXIV_RE = re.compile(r"arXiv\s*:?\s*(\d{4}\.\d{4,5})", re.I)
@@ -152,16 +159,21 @@ def _bib_authors(value: str) -> list[str]:
 
 def entry_from_bib(raw: dict[str, Any]) -> dict[str, Any]:
     f = raw["fields"]
-    year = _YEAR_RE.search(f.get("year", "") or f.get("date", ""))
+    year = _find_year(f.get("year", "") or f.get("date", ""))
     doi = _DOI_RE.search(f.get("doi", ""))
     arxiv = _ARXIV_RE.search(f"arXiv:{f['eprint']}" if f.get("eprint") else f.get("journal", ""))
     url = clean_latex(f.get("url")) or (f"https://arxiv.org/abs/{arxiv.group(1)}" if arxiv else None)
+    title, warnings = clean_latex(f.get("title")), []
+    if not title:  # validator needs a title; keep the other field values as evidence, like \bibitem
+        title = ", ".join(v for v in (clean_latex(x) for x in f.values()) if v) or raw["citation_key"]
+        warnings.append("title_from_raw")
     return {
         "citation_key": raw["citation_key"],
         "entry_type": raw["entry_type"],
-        "title": clean_latex(f.get("title")),
+        "title": title,
+        "warnings": warnings,
         "authors": _bib_authors(f.get("author", "")),
-        "year": int(year.group(1)) if year else None,
+        "year": year,
         "doi": doi.group(0).rstrip(".") if doi else None,
         # schema has no booktitle column, so the venue of a conference paper goes to journal
         "journal": clean_latex(f.get("journal") or f.get("booktitle")) or None,
@@ -244,19 +256,19 @@ def convert_bibitem(key: str, raw: str) -> tuple[dict[str, Any], list[str]]:
         venue = " ".join(sentences[2:])
         warnings.append("no_block_markers")
 
-    year = _YEAR_RE.search(clean_latex(body))
-    authors_txt = _YEAR_RE.sub("", re.sub(r"\(\s*\)", "", authors_txt.replace(f"({year.group(1)})" if year else "\0", "")))
+    year = _find_year(clean_latex(body), last=True)  # the year usually closes the item, after volume/pages
+    authors_txt = _YEAR_RE.sub("", re.sub(r"\(\s*\)", "", authors_txt.replace(f"({year})" if year else "\0", "")))
     entry_type = _guess_type(venue)
     venue = re.sub(r"\bdoi\s*:?\s*$", "", re.sub(r"^\s*in\s+", "", venue, flags=re.I), flags=re.I)
     if not title:
-        title = clean_latex(raw)  # validator needs a title; full text keeps the evidence for matching
+        title = clean_latex(raw) or key  # validator needs a title; full text keeps the evidence for matching
         warnings.append("title_from_raw")
     return {
         "citation_key": key,
         "entry_type": entry_type,
         "title": title,
         "authors": _split_authors(authors_txt),
-        "year": int(year.group(1)) if year else None,
+        "year": year,
         "doi": doi.group(0).rstrip(".") if doi else None,
         "journal": venue.strip(" .,") or None if entry_type in {"article", "inproceedings"} else None,
         "url": url,
@@ -289,7 +301,7 @@ def collect_version_entries(source_dir: str | Path, reachable_files: list[str]) 
                 raws, warns = parse_bib_file(bib.read_text(encoding="utf-8", errors="replace"))
                 diagnostics += [f"{bib.relative_to(root).as_posix()}:{w}" for w in warns]
                 for raw in raws:
-                    entries.append({**entry_from_bib(raw), "origin": "bib", "source_file": bib.relative_to(root).as_posix(), "warnings": []})
+                    entries.append({**entry_from_bib(raw), "origin": "bib", "source_file": bib.relative_to(root).as_posix()})
         for block in _THEBIB_RE.finditer(text):
             for key, raw in parse_bibitems(block.group(1)):
                 try:
