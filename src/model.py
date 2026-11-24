@@ -17,6 +17,10 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 from src.features import (
     FEATURE_NAMES,
+    _prepare_bib_entry,
+    _prepare_candidate_ref,
+    _score_prepared_pair,
+    _score_prepared_vector,
     extract_feature_vector,
     extract_pair_features,
 )
@@ -48,13 +52,9 @@ class HeuristicRanker:
     """
 
     def __init__(self, weights: Optional[Dict[str, float]] = None):
-        self.weights = weights or DEFAULT_HEURISTIC_WEIGHTS.copy()
+        self.weights = DEFAULT_HEURISTIC_WEIGHTS.copy() if weights is None else dict(weights)
 
-    def score_pair(self, bib_entry: Dict[str, Any], candidate_ref: Dict[str, Any]) -> float:
-        """Tính điểm tương đồng số học giữa một entry và một candidate."""
-        features = extract_pair_features(bib_entry, candidate_ref)
-
-        # Nếu trùng khớp định danh tuyệt đối (DOI hoặc arXiv ID), trao điểm ưu tiên cực đại
+    def _score_features(self, features: Dict[str, float]) -> float:
         if features.get("arxiv_id_match", 0.0) == 1.0:
             return 100.0 + features.get("title_edit_ratio", 0.0)
         if features.get("doi_match", 0.0) == 1.0:
@@ -62,10 +62,16 @@ class HeuristicRanker:
 
         score = 0.0
         for feat_name, weight in self.weights.items():
-            val = features.get(feat_name, 0.0)
-            score += weight * val
-
+            score += weight * features.get(feat_name, 0.0)
         return float(score)
+
+    def score_pair(self, bib_entry: Dict[str, Any], candidate_ref: Dict[str, Any]) -> float:
+        """Tính điểm tương đồng số học giữa một entry và một candidate."""
+        return self._score_features(extract_pair_features(bib_entry, candidate_ref))
+
+    def score_prepared_pair(self, prep_bib: Dict[str, Any], prep_cand: Dict[str, Any]) -> float:
+        """Fast pair scoring using precomputed bib/candidate dictionaries."""
+        return self._score_features(_score_prepared_pair(prep_bib, prep_cand))
 
     def rank_candidates(
         self,
@@ -128,18 +134,39 @@ class LearnedRanker:
                 n_estimators=kwargs.get("n_estimators", 100),
                 max_depth=kwargs.get("max_depth", 8),
                 class_weight=class_weight,
+                n_jobs=kwargs.get("n_jobs", -1),
+                random_state=random_state,
+            )
+        elif self.model_type in {"hist_gb", "hist_gradient_boosting"}:
+            from sklearn.ensemble import HistGradientBoostingClassifier
+            self.model = HistGradientBoostingClassifier(
+                max_iter=kwargs.get("max_iter", 150),
+                max_depth=kwargs.get("max_depth", 6),
+                learning_rate=kwargs.get("learning_rate", 0.08),
+                class_weight=class_weight,
                 random_state=random_state,
             )
         else:
-            raise ValueError(f"model_type không hợp lệ: {model_type}. Chọn 'logistic' hoặc 'random_forest'.")
+            raise ValueError(
+                f"model_type không hợp lệ: {model_type}. Chọn 'logistic', 'random_forest' hoặc 'hist_gb'."
+            )
 
-    def fit(self, X: List[List[float]], y: List[int]) -> LearnedRanker:
+    def fit(self, X: Any, y: Any) -> LearnedRanker:
         """Huấn luyện mô hình trên tập dữ liệu đặc trưng (X, y)."""
-        if not X or not y:
+        if len(X) == 0 or len(y) == 0:
             raise ValueError("Tập dữ liệu huấn luyện (X, y) không được rỗng!")
+        if len(X) != len(y):
+            raise ValueError(f"Độ dài X ({len(X)}) và y ({len(y)}) không khớp!")
         self.model.fit(X, y)
         self.is_fitted = True
         return self
+
+    def _positive_probs(self, probs: Any) -> List[float]:
+        classes = list(getattr(self.model, "classes_", []))
+        if 1 not in classes:
+            return [0.0] * len(probs)
+        pos_idx = classes.index(1)
+        return [float(row[pos_idx]) for row in probs]
 
     def score_pair(self, bib_entry: Dict[str, Any], candidate_ref: Dict[str, Any]) -> float:
         """Dự đoán xác suất match P(match=1) cho 1 cặp."""
@@ -147,10 +174,7 @@ class LearnedRanker:
             raise RuntimeError("Mô hình chưa được fit! Hãy gọi fit(X, y) trước.")
         feat_vec = extract_feature_vector(bib_entry, candidate_ref)
         probs = self.model.predict_proba([feat_vec])
-        # Xác suất nhãn positive (class 1)
-        if probs.shape[1] > 1:
-            return float(probs[0][1])
-        return float(probs[0][0])
+        return self._positive_probs(probs)[0]
 
     def rank_candidates(
         self,
@@ -182,7 +206,7 @@ class LearnedRanker:
             raise RuntimeError("Mô hình chưa được huấn luyện! Hãy gọi .fit() trước.")
 
         probs = self.model.predict_proba(feat_matrix)
-        scores = [float(p[1]) if len(p) > 1 else float(p[0]) for p in probs]
+        scores = self._positive_probs(probs)
 
         scored = list(zip(c_aids, scores))
         scored.sort(key=lambda item: (-item[1], item[0]))
@@ -192,6 +216,37 @@ class LearnedRanker:
 # ==============================================================================
 # 3. CHUẨN BỊ TẬP DỮ LIỆU HUẤN LUYỆN (PAIRWISE DATASET GENERATOR)
 # ==============================================================================
+
+def _prepare_candidates_by_pub(
+    candidates: List[Dict[str, Any]],
+) -> Dict[str, List[Tuple[str, Dict[str, Any]]]]:
+    cand_by_pub: Dict[str, List[Tuple[str, Dict[str, Any]]]] = {}
+    seen: Set[Tuple[str, str]] = set()
+    for c in candidates:
+        aid = normalize_arxiv_id(c.get("arxiv_id"))
+        if not aid:
+            continue
+        ext_ids = c.get("externalIds") if isinstance(c.get("externalIds"), dict) else {}
+        c_aid = normalize_arxiv_id(c.get("ref_arxiv_id") or ext_ids.get("ArXiv"))
+        if not c_aid or (aid, c_aid) in seen:
+            continue
+        seen.add((aid, c_aid))
+        cand_by_pub.setdefault(aid, []).append((c_aid, _prepare_candidate_ref(c)))
+    return cand_by_pub
+
+
+def _unique_top_k(scored: List[Tuple[str, float]], k: int) -> List[str]:
+    scored.sort(key=lambda item: (-item[1], item[0]))
+    seen_ids: Set[str] = set()
+    unique_top: List[str] = []
+    for c_id, _ in scored:
+        if c_id not in seen_ids:
+            seen_ids.add(c_id)
+            unique_top.append(c_id)
+            if len(unique_top) == k:
+                break
+    return unique_top
+
 
 def build_pairwise_dataset(
     bib_entries: List[Dict[str, Any]],
@@ -206,12 +261,7 @@ def build_pairwise_dataset(
       - Các cặp còn lại: y = 0.
     - negative_sample_ratio: Tùy chọn downsample mẫu âm (ví dụ 10 mẫu âm / 1 mẫu dương) để cân bằng dữ liệu.
     """
-    # Gom nhóm candidates theo publication arxiv_id
-    cand_by_pub: Dict[str, List[Dict[str, Any]]] = {}
-    for c in candidates:
-        aid = normalize_arxiv_id(c.get("arxiv_id"))
-        if aid:
-            cand_by_pub.setdefault(aid, []).append(c)
+    cand_by_pub = _prepare_candidates_by_pub(candidates)
 
     rng = random.Random(seed)
     X: List[List[float]] = []
@@ -223,31 +273,29 @@ def build_pairwise_dataset(
         ckey = str(entry.get("citation_key", ""))
         gt_id = normalize_arxiv_id(entry.get("groundtruth_arxiv_id"))
         cands = cand_by_pub.get(pub_id, [])
+        if not cands:
+            continue
 
-        pos_candidates: List[Tuple[Dict[str, Any], str]] = []
-        neg_candidates: List[Tuple[Dict[str, Any], str]] = []
+        prep_bib = _prepare_bib_entry(entry)
+        pos_candidates: List[Tuple[str, Dict[str, Any]]] = []
+        neg_candidates: List[Tuple[str, Dict[str, Any]]] = []
 
-        for c in cands:
-            ext_ids = c.get("externalIds") if isinstance(c.get("externalIds"), dict) else {}
-            c_aid = normalize_arxiv_id(c.get("ref_arxiv_id") or ext_ids.get("ArXiv"))
-            if not c_aid:
-                continue
+        for c_aid, prep_c in cands:
             if gt_id and c_aid == gt_id:
-                pos_candidates.append((c, c_aid))
+                pos_candidates.append((c_aid, prep_c))
             else:
-                neg_candidates.append((c, c_aid))
+                neg_candidates.append((c_aid, prep_c))
 
-        # Chọn mẫu âm trước khi trích xuất đặc trưng. Ở full shard, tính
-        # SequenceMatcher cho mọi candidate rồi mới bỏ bớt làm lãng phí phần
-        # lớn CPU dù tập huấn luyện cuối cùng chỉ giữ N mẫu âm / mẫu dương.
+        # Chọn mẫu âm trước khi trích xuất đặc trưng để full shard không tính
+        # hàng triệu vector chắc chắn sẽ bị loại khỏi tập huấn luyện.
         if negative_sample_ratio is not None and neg_candidates:
             max_negs = max(1, len(pos_candidates)) * negative_sample_ratio
             if len(neg_candidates) > max_negs:
                 neg_candidates = rng.sample(neg_candidates, max_negs)
 
         for label, selected in ((1, pos_candidates), (0, neg_candidates)):
-            for candidate, candidate_aid in selected:
-                X.append(extract_feature_vector(entry, candidate))
+            for candidate_aid, prep_candidate in selected:
+                X.append(_score_prepared_vector(prep_bib, prep_candidate))
                 y.append(label)
                 meta.append(
                     {
@@ -272,6 +320,7 @@ def predict_top_k_candidates(
     default_partition: str = "test",
     split_manifest: Optional[Dict[str, str]] = None,
     k: int = 5,
+    batch_size: int = 32768,
 ) -> List[Dict[str, Any]]:
     """
     Sinh danh sách kết quả dự đoán top-k ứng viên cho từng BibTeX entry.
@@ -281,13 +330,46 @@ def predict_top_k_candidates(
     - Đảm bảo padding None nếu số ứng viên < k.
     - Đảm bảo không leak candidate khác publication.
     """
-    cand_by_pub: Dict[str, List[Dict[str, Any]]] = {}
-    for c in candidates:
-        aid = normalize_arxiv_id(c.get("arxiv_id"))
-        if aid:
-            cand_by_pub.setdefault(aid, []).append(c)
+    is_learned = isinstance(model, LearnedRanker)
+    is_heuristic = isinstance(model, HeuristicRanker)
+    if is_learned and not model.is_fitted:
+        raise RuntimeError("Mô hình chưa được huấn luyện! Hãy gọi .fit() trước.")
+
+    cand_by_pub: Dict[str, List[Any]]
+    if is_learned or is_heuristic:
+        cand_by_pub = _prepare_candidates_by_pub(candidates)
+    else:
+        raw_by_pub: Dict[str, List[Dict[str, Any]]] = {}
+        for c in candidates:
+            aid = normalize_arxiv_id(c.get("arxiv_id"))
+            if aid:
+                raw_by_pub.setdefault(aid, []).append(c)
+        cand_by_pub = raw_by_pub
+
+    norm_split_manifest: Optional[Dict[str, str]] = None
+    if split_manifest is not None:
+        norm_split_manifest = {
+            norm_k: str(part).strip().lower()
+            for k_aid, part in split_manifest.items()
+            if (norm_k := normalize_arxiv_id(k_aid))
+        }
 
     predictions: List[Dict[str, Any]] = []
+    pending_rows: List[Tuple[int, List[str], int, int]] = []
+    pending_X: List[List[float]] = []
+
+    def _flush_learned_batch() -> None:
+        if not pending_X:
+            return
+        probs = model.model.predict_proba(pending_X)  # type: ignore[union-attr]
+        scores = model._positive_probs(probs)  # type: ignore[union-attr]
+        for row_idx, c_aids, start, end in pending_rows:
+            unique_top = _unique_top_k(list(zip(c_aids, scores[start:end])), k)
+            row = predictions[row_idx]
+            for rank_idx in range(1, k + 1):
+                row[f"cand_{rank_idx}"] = unique_top[rank_idx - 1] if rank_idx <= len(unique_top) else None
+        pending_rows.clear()
+        pending_X.clear()
 
     for entry in bib_entries:
         pub_id = normalize_arxiv_id(entry.get("arxiv_id"))
@@ -295,34 +377,17 @@ def predict_top_k_candidates(
             continue
 
         # Nếu có split_manifest: chỉ tạo prediction cho bài nằm trong matching pools (train/valid/test)
-        if split_manifest is not None:
-            if pub_id not in split_manifest:
+        if norm_split_manifest is not None:
+            if pub_id not in norm_split_manifest:
                 continue
-            part = split_manifest[pub_id]
+            part = norm_split_manifest[pub_id]
         else:
             part = default_partition
 
         ckey = str(entry.get("citation_key", ""))
         gt_id = normalize_arxiv_id(entry.get("groundtruth_arxiv_id")) or None
-
         cands = cand_by_pub.get(pub_id, [])
 
-        # Xếp hạng các candidates trong publication
-        if cands:
-            ranked = model.rank_candidates(entry, cands)
-            # Khử trùng lặp mã arXiv trong top candidates giữ nguyên thứ tự điểm
-            seen_ids: Set[str] = set()
-            unique_top: List[str] = []
-            for c_id, _ in ranked:
-                if c_id not in seen_ids:
-                    seen_ids.add(c_id)
-                    unique_top.append(c_id)
-                if len(unique_top) == k:
-                    break
-        else:
-            unique_top = []
-
-        # Padding None cho đủ k ứng viên
         row: Dict[str, Any] = {
             "arxiv_id": pub_id,
             "partition": part,
@@ -330,11 +395,37 @@ def predict_top_k_candidates(
             "groundtruth_arxiv_id": gt_id,
         }
         for rank_idx in range(1, k + 1):
-            cand_key = f"cand_{rank_idx}"
-            row[cand_key] = unique_top[rank_idx - 1] if rank_idx <= len(unique_top) else None
+            row[f"cand_{rank_idx}"] = None
 
+        row_idx = len(predictions)
         predictions.append(row)
 
+        if not cands:
+            continue
+
+        if is_learned:
+            prep_bib = _prepare_bib_entry(entry)
+            start = len(pending_X)
+            c_aids: List[str] = []
+            for c_aid, prep_c in cands:
+                c_aids.append(c_aid)
+                pending_X.append(_score_prepared_vector(prep_bib, prep_c))
+            pending_rows.append((row_idx, c_aids, start, len(pending_X)))
+            if len(pending_X) >= batch_size:
+                _flush_learned_batch()
+        elif is_heuristic:
+            prep_bib = _prepare_bib_entry(entry)
+            scored = [(c_aid, model.score_prepared_pair(prep_bib, prep_c)) for c_aid, prep_c in cands]
+            unique_top = _unique_top_k(scored, k)
+            for rank_idx in range(1, k + 1):
+                row[f"cand_{rank_idx}"] = unique_top[rank_idx - 1] if rank_idx <= len(unique_top) else None
+        else:
+            ranked = model.rank_candidates(entry, cands)
+            unique_top = _unique_top_k(list(ranked), k)
+            for rank_idx in range(1, k + 1):
+                row[f"cand_{rank_idx}"] = unique_top[rank_idx - 1] if rank_idx <= len(unique_top) else None
+
+    _flush_learned_batch()
     return predictions
 
 
@@ -385,8 +476,14 @@ def generate_mock_matching_dataset(
 
         # Sinh các candidate references cho publication này
         pub_cands: List[Dict[str, Any]] = []
+        used_ref_aids: Set[str] = set()
         for r_idx in range(1, refs_per_pub + 1):
-            ref_aid = f"17{r_idx:02d}.{rng.randint(1000, 9999):05d}"
+            month = (r_idx - 1) % 12 + 1
+            while True:
+                ref_aid = f"17{month:02d}.{rng.randint(10000, 99999)}"
+                if ref_aid not in used_ref_aids:
+                    used_ref_aids.add(ref_aid)
+                    break
             r_title = f"On the Foundations of {' '.join(rng.sample(words_pool, 3))}"
             author_name = f"{rng.choice(authors_pool)} {chr(65 + rng.randint(0, 25))}."
             r_authors = [author_name]
@@ -408,6 +505,7 @@ def generate_mock_matching_dataset(
             pub_cands.append(ref_record)
 
         # Sinh các BibTeX entries
+        matched_in_pub = 0
         for e_idx in range(1, entries_per_pub + 1):
             ckey = f"ref_{p_idx}_{e_idx}"
             prob = rng.random()
@@ -420,15 +518,17 @@ def generate_mock_matching_dataset(
                 e_authors = matched_cand["ref_authors"]
                 e_year = matched_cand["ref_year"]
                 e_doi = matched_cand["doi"]
+                matched_in_pub += 1
             elif prob < 0.85 and pub_cands:
                 # 25% Fuzzy match có nhiễu
                 matched_cand = pub_cands[(e_idx - 1) % len(pub_cands)]
                 gt_aid = matched_cand["ref_arxiv_id"]
                 # Thêm typo nhỏ hoặc viết hoa/thường
                 e_title = matched_cand["ref_title"].lower() + " (extended study)"
-                e_authors = [matched_cand["ref_authors"][0].split()[-1]]  # Chỉ giữ họ
+                e_authors = [matched_cand["ref_authors"][0].split()[0]]  # Chỉ giữ họ
                 e_year = matched_cand["ref_year"] + rng.choice([-1, 0, 1])
                 e_doi = None  # Thiếu DOI
+                matched_in_pub += 1
             else:
                 # 15% No match
                 gt_aid = None
@@ -454,14 +554,20 @@ def generate_mock_matching_dataset(
         if p_idx <= 5:
             manual_pool.append({
                 "arxiv_id": pub_aid,
+                "method": "manual",
                 "labeled_by": "member_4",
                 "entries_count": entries_per_pub,
+                "labeled_count": entries_per_pub,
+                "matched_count": matched_in_pub,
             })
         else:
             auto_pool.append({
                 "arxiv_id": pub_aid,
+                "method": "automatic",
                 "labeled_by": "auto_heuristic",
                 "entries_count": entries_per_pub,
+                "labeled_count": entries_per_pub,
+                "matched_count": matched_in_pub,
             })
 
     return {

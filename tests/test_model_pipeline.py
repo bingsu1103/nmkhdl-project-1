@@ -416,7 +416,7 @@ def test_downsampling_happens_before_feature_extraction(monkeypatch):
         calls += 1
         return [float(calls)]
 
-    monkeypatch.setattr(model_module, "extract_feature_vector", counted_features)
+    monkeypatch.setattr(model_module, "_score_prepared_vector", counted_features)
     X, y, _ = build_pairwise_dataset(
         bib_entries, candidates, negative_sample_ratio=3, seed=42
     )
