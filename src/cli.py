@@ -45,6 +45,7 @@ from .m2_integration import (
     validate_m2_tables,
 )
 from .m3_integration import (
+    generate_assisted_manual_labels,
     Milestone3IntegrationError,
     prepare_manual_label_review,
     run_matching_pipeline,
@@ -252,6 +253,16 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_labels.add_argument("--max-entries", type=int, default=40)
     prepare_labels.set_defaults(handler=_prepare_matching_labels)
 
+    assist_labels = subparsers.add_parser(
+        "assist-matching-labels",
+        help="Create provenance-preserving manual labels from unique exact-title evidence.",
+    )
+    assist_labels.add_argument("--data-dir", type=Path, required=True)
+    assist_labels.add_argument("--output", type=Path, required=True)
+    assist_labels.add_argument("--publication-count", type=int, default=5)
+    assist_labels.add_argument("--entries-per-publication", type=int, default=20)
+    assist_labels.set_defaults(handler=_assist_matching_labels)
+
     run_matching = subparsers.add_parser(
         "run-matching",
         help="Run M3 labeling, split, training, evaluation and predictions gates.",
@@ -293,6 +304,17 @@ def _prepare_matching_labels(args: argparse.Namespace) -> int:
         publication_count=args.publication_count,
         min_entries=args.min_entries,
         max_entries=args.max_entries,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
+def _assist_matching_labels(args: argparse.Namespace) -> int:
+    result = generate_assisted_manual_labels(
+        data_dir=_external_data_dir(args.data_dir),
+        output_path=args.output,
+        publication_count=args.publication_count,
+        entries_per_publication=args.entries_per_publication,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return EXIT_OK

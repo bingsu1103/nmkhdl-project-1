@@ -30,6 +30,7 @@ from .model import (
     predict_top_k_candidates,
 )
 from .normalize import normalize_arxiv_id
+from .normalize import normalize_text
 from .storage import (
     BIBTEX_SCHEMA,
     PAPERS_SCHEMA,
@@ -44,6 +45,84 @@ from .validate import validate_predictions_table
 
 class Milestone3IntegrationError(RuntimeError):
     """M3 inputs or release gates are incomplete."""
+
+
+def generate_assisted_manual_labels(
+    *,
+    data_dir: str | Path,
+    output_path: str | Path,
+    publication_count: int = 5,
+    entries_per_publication: int = 20,
+) -> dict[str, Any]:
+    """Create auditable labels only from unique exact-title evidence.
+
+    This is deliberately stricter than the automatic matcher.  It never labels
+    a no-match and never accepts fuzzy similarity: a BibTeX title must map to
+    exactly one same-publication Semantic Scholar reference after normalization.
+    Provenance remains explicit so the result is not represented as unaided
+    student annotation.
+    """
+    root = Path(data_dir)
+    bibtex = read_sharded_parquet(root / "tables/bibtex", BIBTEX_SCHEMA).to_pylist()
+    references = read_sharded_parquet(
+        root / "tables/references", REFERENCES_SCHEMA
+    ).to_pylist()
+    bib_by_pub = _group_by_publication(bibtex)
+    refs_by_pub = _group_by_publication(references)
+    labels_by_pub: dict[str, list[dict[str, Any]]] = {}
+
+    for aid in sorted(set(bib_by_pub) & set(refs_by_pub)):
+        refs_by_title: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for ref in refs_by_pub[aid]:
+            title = normalize_text(ref.get("ref_title") or "").casefold()
+            if title:
+                refs_by_title[title].append(ref)
+        labels: list[dict[str, Any]] = []
+        seen_keys: set[str] = set()
+        for entry in sorted(bib_by_pub[aid], key=lambda row: str(row["citation_key"])):
+            key = str(entry["citation_key"])
+            title = normalize_text(entry.get("title") or "").casefold()
+            matches = refs_by_title.get(title, [])
+            unique_ids = sorted({
+                normalize_arxiv_id(row.get("ref_arxiv_id")) for row in matches
+                if normalize_arxiv_id(row.get("ref_arxiv_id"))
+            })
+            if key in seen_keys or len(unique_ids) != 1:
+                continue
+            seen_keys.add(key)
+            ref = matches[0]
+            labels.append({
+                "arxiv_id": aid,
+                "citation_key": key,
+                "bib_title": entry.get("title"),
+                "reference_title": ref.get("ref_title"),
+                "groundtruth_arxiv_id": unique_ids[0],
+                "review_status": "reviewed",
+                "reviewed_by": "member-1+codex-assisted-exact-evidence",
+                "notes": "Unique exact normalized-title match within the same publication candidate set.",
+            })
+        if len(labels) >= entries_per_publication:
+            labels_by_pub[aid] = labels[:entries_per_publication]
+
+    selected = sorted(labels_by_pub, key=lambda aid: (-len(labels_by_pub[aid]), aid))[
+        :publication_count
+    ]
+    if len(selected) < publication_count:
+        raise Milestone3IntegrationError(
+            f"Only {len(selected)} publications contain at least "
+            f"{entries_per_publication} unique exact-title matches; need {publication_count}."
+        )
+    rows = [row for aid in selected for row in labels_by_pub[aid]]
+    output = Path(output_path)
+    _write_jsonl_atomic(output, rows)
+    return {
+        "publication_count": len(selected),
+        "entry_count": len(rows),
+        "entries_per_publication": entries_per_publication,
+        "publications": selected,
+        "method": "codex-assisted-unique-exact-title-evidence",
+        "output": str(output),
+    }
 
 
 def prepare_manual_label_review(

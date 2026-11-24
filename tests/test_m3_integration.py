@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.m3_integration import prepare_manual_label_review, run_matching_pipeline
+from src.m3_integration import (
+    generate_assisted_manual_labels,
+    prepare_manual_label_review,
+    run_matching_pipeline,
+)
 from src.storage import (
     BIBTEX_SCHEMA,
     PAPERS_SCHEMA,
@@ -86,6 +90,20 @@ def _build_realistic_tables(root: Path) -> list[dict[str, object]]:
 
 def test_prepare_review_and_run_matching_pipeline(tmp_path: Path) -> None:
     labels = _build_realistic_tables(tmp_path)
+    assisted_path = tmp_path / "labels/assisted.jsonl"
+    assisted = generate_assisted_manual_labels(
+        data_dir=tmp_path,
+        output_path=assisted_path,
+        publication_count=5,
+        entries_per_publication=20,
+    )
+    assert assisted["entry_count"] == 100
+    assisted_rows = [
+        json.loads(line) for line in assisted_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert all(row["review_status"] == "reviewed" for row in assisted_rows)
+    assert all("codex-assisted" in row["reviewed_by"] for row in assisted_rows)
+
     review_path = tmp_path / "labels/review.jsonl"
     prepared = prepare_manual_label_review(
         data_dir=tmp_path,
