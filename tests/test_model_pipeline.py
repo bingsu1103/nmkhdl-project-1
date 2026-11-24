@@ -4,6 +4,7 @@ Thuộc sở hữu của Member 4 - Data Quality, Matching Model và Evaluation.
 """
 
 import pytest
+import src.model as model_module
 
 from src.evaluate import compute_mrr_at_k
 from src.features import (
@@ -388,6 +389,42 @@ def test_downsampling_unmatched_entries():
     assert len(X) == 3
     assert len(y) == 3
     assert all(label == 0 for label in y)
+
+
+def test_downsampling_happens_before_feature_extraction(monkeypatch):
+    """Không tính đặc trưng cho các mẫu âm chắc chắn sẽ bị loại."""
+    bib_entries = [
+        {
+            "arxiv_id": "2301.00001",
+            "citation_key": "key",
+            "title": "Matched title",
+            "groundtruth_arxiv_id": "1701.00001",
+        }
+    ]
+    candidates = [
+        {
+            "arxiv_id": "2301.00001",
+            "ref_arxiv_id": f"1701.{index:05d}",
+            "ref_title": f"Candidate {index}",
+        }
+        for index in range(1, 22)
+    ]
+    calls = 0
+
+    def counted_features(entry, candidate):
+        nonlocal calls
+        calls += 1
+        return [float(calls)]
+
+    monkeypatch.setattr(model_module, "extract_feature_vector", counted_features)
+    X, y, _ = build_pairwise_dataset(
+        bib_entries, candidates, negative_sample_ratio=3, seed=42
+    )
+
+    assert len(X) == 4
+    assert y.count(1) == 1
+    assert y.count(0) == 3
+    assert calls == 4
 
 
 def test_create_table_numeric_string_coercion():

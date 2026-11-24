@@ -224,44 +224,39 @@ def build_pairwise_dataset(
         gt_id = normalize_arxiv_id(entry.get("groundtruth_arxiv_id"))
         cands = cand_by_pub.get(pub_id, [])
 
-        pos_pairs: List[Tuple[List[float], Dict[str, Any]]] = []
-        neg_pairs: List[Tuple[List[float], Dict[str, Any]]] = []
+        pos_candidates: List[Tuple[Dict[str, Any], str]] = []
+        neg_candidates: List[Tuple[Dict[str, Any], str]] = []
 
         for c in cands:
             ext_ids = c.get("externalIds") if isinstance(c.get("externalIds"), dict) else {}
             c_aid = normalize_arxiv_id(c.get("ref_arxiv_id") or ext_ids.get("ArXiv"))
             if not c_aid:
                 continue
-
-            f_vec = extract_feature_vector(entry, c)
-            pair_meta = {
-                "arxiv_id": pub_id,
-                "citation_key": ckey,
-                "ref_arxiv_id": c_aid,
-                "groundtruth_arxiv_id": gt_id,
-            }
-
             if gt_id and c_aid == gt_id:
-                pos_pairs.append((f_vec, pair_meta))
+                pos_candidates.append((c, c_aid))
             else:
-                neg_pairs.append((f_vec, pair_meta))
+                neg_candidates.append((c, c_aid))
 
-        # Lưu mẫu positive
-        for f, m in pos_pairs:
-            X.append(f)
-            y.append(1)
-            meta.append(m)
+        # Chọn mẫu âm trước khi trích xuất đặc trưng. Ở full shard, tính
+        # SequenceMatcher cho mọi candidate rồi mới bỏ bớt làm lãng phí phần
+        # lớn CPU dù tập huấn luyện cuối cùng chỉ giữ N mẫu âm / mẫu dương.
+        if negative_sample_ratio is not None and neg_candidates:
+            max_negs = max(1, len(pos_candidates)) * negative_sample_ratio
+            if len(neg_candidates) > max_negs:
+                neg_candidates = rng.sample(neg_candidates, max_negs)
 
-        # Lưu mẫu negative (downsample nếu được chỉ định)
-        if negative_sample_ratio is not None and neg_pairs:
-            max_negs = max(1, len(pos_pairs)) * negative_sample_ratio
-            if len(neg_pairs) > max_negs:
-                neg_pairs = rng.sample(neg_pairs, max_negs)
-
-        for f, m in neg_pairs:
-            X.append(f)
-            y.append(0)
-            meta.append(m)
+        for label, selected in ((1, pos_candidates), (0, neg_candidates)):
+            for candidate, candidate_aid in selected:
+                X.append(extract_feature_vector(entry, candidate))
+                y.append(label)
+                meta.append(
+                    {
+                        "arxiv_id": pub_id,
+                        "citation_key": ckey,
+                        "ref_arxiv_id": candidate_aid,
+                        "groundtruth_arxiv_id": gt_id,
+                    }
+                )
 
     return X, y, meta
 

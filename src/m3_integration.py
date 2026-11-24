@@ -304,11 +304,17 @@ def run_matching_pipeline(
 
     heuristic = HeuristicRanker()
     learned = LearnedRanker(random_state=random_seed).fit(X, y)
+    selected_references = [
+        row for row in references if row["arxiv_id"] in split_map
+    ]
+    valid_entries = [
+        row for row in matching_entries if split_map[row["arxiv_id"]] == "valid"
+    ]
     baseline_predictions = predict_top_k_candidates(
-        matching_entries, references, heuristic, split_manifest=split_map
+        valid_entries, selected_references, heuristic, split_manifest=split_map
     )
     learned_predictions = predict_top_k_candidates(
-        matching_entries, references, learned, split_manifest=split_map
+        valid_entries, selected_references, learned, split_manifest=split_map
     )
     baseline_valid = compute_mrr_at_k(
         baseline_predictions, k=5, partition_filter="valid"
@@ -319,11 +325,15 @@ def run_matching_pipeline(
     if learned_valid["mrr"] >= baseline_valid["mrr"]:
         selected_name = "logistic"
         selected_model: Any = learned
-        predictions = learned_predictions
     else:
         selected_name = "heuristic"
         selected_model = heuristic
-        predictions = baseline_predictions
+    predictions = predict_top_k_candidates(
+        matching_entries,
+        selected_references,
+        selected_model,
+        split_manifest=split_map,
+    )
 
     prediction_table = create_table_from_records(predictions, PREDICTIONS_SCHEMA)
     validation = validate_predictions_table(
