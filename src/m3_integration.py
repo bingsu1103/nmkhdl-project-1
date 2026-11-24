@@ -17,10 +17,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
+import pyarrow as pa
+import pyarrow.compute as pc
+
 from .evaluate import compute_mrr_at_k
 from .label import (
     create_publication_split,
-    heuristic_match_entry,
+    heuristic_match_publication,
     validate_labeling_quota,
 )
 from .model import (
@@ -216,7 +219,6 @@ def run_matching_pipeline(
     bibtex_table = read_sharded_parquet(tables / "bibtex", BIBTEX_SCHEMA)
     papers = papers_table.to_pylist()
     references = references_table.to_pylist()
-    bibtex = bibtex_table.to_pylist()
     if len(papers) != assigned_publication_count:
         raise Milestone3IntegrationError(
             f"papers table has {len(papers)} rows; expected {assigned_publication_count}"
@@ -224,19 +226,18 @@ def run_matching_pipeline(
 
     manual_labels = _read_reviewed_manual_labels(manual_labels_path)
     refs_by_pub = _group_by_publication(references)
-    bib_by_pub = _group_by_publication(bibtex)
-    manual_summaries = _validate_manual_labels(
-        manual_labels, bib_by_pub=bib_by_pub, refs_by_pub=refs_by_pub,
-        min_publications=5 * num_members,
-    )
-
-    manual_ids = {row["arxiv_id"] for row in manual_summaries}
+    manual_ids = {row["arxiv_id"] for row in manual_labels}
+    bib_publication_ids = {
+        normalized
+        for value in pc.unique(bibtex_table.column("arxiv_id"))
+        if (normalized := normalize_arxiv_id(value.as_py()))
+    }
     required_auto = max(
         2 * num_members,
         math.ceil(0.10 * max(0, assigned_publication_count - len(manual_ids))),
     )
     auto_candidates = sorted(
-        aid for aid in set(bib_by_pub) & set(refs_by_pub) if aid not in manual_ids
+        aid for aid in bib_publication_ids & set(refs_by_pub) if aid not in manual_ids
     )
     if len(auto_candidates) < required_auto:
         raise Milestone3IntegrationError(
@@ -244,6 +245,19 @@ def run_matching_pipeline(
             f"the 10% gate requires {required_auto}."
         )
     auto_ids = auto_candidates[:required_auto]
+    selected_ids = manual_ids | set(auto_ids)
+    selected_bibtex = bibtex_table.filter(
+        pc.is_in(
+            bibtex_table.column("arxiv_id"),
+            value_set=pa.array(sorted(selected_ids), type=pa.string()),
+        )
+    )
+    bibtex = selected_bibtex.to_pylist()
+    bib_by_pub = _group_by_publication(bibtex)
+    manual_summaries = _validate_manual_labels(
+        manual_labels, bib_by_pub=bib_by_pub, refs_by_pub=refs_by_pub,
+        min_publications=5 * num_members,
+    )
 
     labels_by_pair = {
         (row["arxiv_id"], row["citation_key"]): row["groundtruth_arxiv_id"]
@@ -251,10 +265,11 @@ def run_matching_pipeline(
     }
     auto_summaries: list[dict[str, Any]] = []
     for aid in auto_ids:
-        for entry in bib_by_pub[aid]:
-            labels_by_pair[(aid, entry["citation_key"])] = heuristic_match_entry(
-                entry, refs_by_pub[aid]
-            )
+        publication_labels = heuristic_match_publication(
+            bib_by_pub[aid], refs_by_pub[aid]
+        )
+        for citation_key, groundtruth in publication_labels.items():
+            labels_by_pair[(aid, citation_key)] = groundtruth
         auto_summaries.append(
             {
                 "arxiv_id": aid,
@@ -363,7 +378,8 @@ def run_matching_pipeline(
         "input_rows": {
             "papers": len(papers),
             "references": len(references),
-            "bibtex": len(bibtex),
+            "bibtex": bibtex_table.num_rows,
+            "selected_bibtex": len(bibtex),
         },
         "quota": quota,
         "split": {
