@@ -76,9 +76,9 @@ Result: `is_success: true`; prediction validation `is_valid: true`.
   505 selected publications.
 - Candidate, BibTeX, reference, and publication foreign keys pass validation.
 - Prediction validation reports zero errors and zero warnings.
-- The repository test suite passes: `189 passed`.
+- The repository test suite passes: `194 passed`.
 - Model SHA-256:
-  `4a0957e27805a50c62407f5c34ae3f0a4401712cb924515ab5fe4e3c22c737f3`.
+  `4a16ccae58b7f9dbcdd2ceeead00aee723b6625ab051aed3fed06625173fcb5b`.
 - Reviewed-label SHA-256:
   `0c32d0621e3577a105e1ab571237bb0f357fee2a2b5e1cfe98330b5cde4c0587`.
 
