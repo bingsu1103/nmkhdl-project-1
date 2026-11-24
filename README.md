@@ -519,4 +519,5 @@ Thiết lập Ruleset/branch protection, required review và merge policy trên 
 - [Kế hoạch tổng](plans/project-1-master-plan.md)
 - [Assignment Member 1](plans/member-1-assignment.md)
 - [Phase 1 contracts](docs/phase1-contracts.md)
+- [Member 1 M2 full-shard evidence](docs/member-1-m2-full-shard.md)
 - [Đề bài](instructions/index.md)
