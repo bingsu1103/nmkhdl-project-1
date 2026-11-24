@@ -246,6 +246,72 @@ def _title_tokens(title: str) -> Set[str]:
     return {w for w in words if len(w) > 2 and w not in stopwords}
 
 
+def _extract_last_names(authors: Optional[Sequence[Any]]) -> Set[str]:
+    names: Set[str] = set()
+    for a in (authors or []):
+        if not a:
+            continue
+        name = a.get("name", "") if isinstance(a, dict) else str(a)
+        tokens = name.strip().lower().split()
+        if tokens:
+            names.add(tokens[-1])
+    return names
+
+
+def _prepare_references(crawled_references: Sequence[Dict[str, Any]]) -> List[Tuple[str, str, Set[str], Set[str], str]]:
+    prepared: List[Tuple[str, str, Set[str], Set[str], str]] = []
+    for ref in crawled_references:
+        ext_ids = ref.get("externalIds") or {}
+        ref_arxiv_id = normalize_arxiv_id(ref.get("ref_arxiv_id") or ext_ids.get("ArXiv"))
+        if not ref_arxiv_id:
+            continue
+        ref_title = normalize_text(ref.get("ref_title") or ref.get("title", ""))
+        ref_tokens = _title_tokens(ref_title)
+        if not ref_tokens:
+            continue
+        ref_authors = _extract_last_names(ref.get("ref_authors") or ref.get("authors"))
+        ref_date = str(ref.get("ref_submission_date") or ref.get("publicationDate") or ref.get("year") or ref.get("ref_year") or "")
+        prepared.append((ref_arxiv_id, ref_title.lower(), ref_tokens, ref_authors, ref_date))
+    return prepared
+
+
+def _match_prepared_entry(
+    bib_entry: Dict[str, Any],
+    prepared_refs: Sequence[Tuple[str, str, Set[str], Set[str], str]],
+    min_similarity_threshold: float,
+) -> Optional[str]:
+    bib_title = normalize_text(bib_entry.get("title", ""))
+    bib_tokens = _title_tokens(bib_title)
+    if not bib_tokens:
+        return None
+
+    bib_authors = _extract_last_names(bib_entry.get("authors"))
+    bib_year = bib_entry.get("year")
+    bib_year_str = str(bib_year) if bib_year else ""
+    bib_title_lower = bib_title.lower()
+
+    best_match_arxiv_id: Optional[str] = None
+    best_score = 0.0
+
+    for ref_arxiv_id, ref_title_lower, ref_tokens, ref_authors, ref_date in prepared_refs:
+        if bib_title_lower == ref_title_lower:
+            title_score = 1.0
+        else:
+            intersection_len = len(bib_tokens.intersection(ref_tokens))
+            union_len = len(bib_tokens) + len(ref_tokens) - intersection_len
+            title_score = intersection_len / union_len if union_len else 0.0
+
+        author_bonus = 0.15 if (bib_authors and ref_authors and not bib_authors.isdisjoint(ref_authors)) else 0.0
+        year_bonus = 0.10 if (bib_year_str and ref_date and bib_year_str in ref_date) else 0.0
+        total_score = title_score + author_bonus + year_bonus
+
+        if total_score > best_score:
+            best_score = total_score
+            best_match_arxiv_id = ref_arxiv_id
+
+    return best_match_arxiv_id if best_score >= min_similarity_threshold else None
+
+
 def heuristic_match_entry(
     bib_entry: Dict[str, Any],
     crawled_references: List[Dict[str, Any]],
@@ -256,68 +322,17 @@ def heuristic_match_entry(
     Sử dụng heuristic so khớp chuỗi (title Jaccard, author overlap, year) để tìm mã arXiv tương ứng.
     Trả về ref_arxiv_id tốt nhất nếu độ tương đồng >= min_similarity_threshold, ngược lại trả về None.
     """
-    bib_title = normalize_text(bib_entry.get("title", ""))
-    bib_tokens = _title_tokens(bib_title)
-    if not bib_tokens:
-        return None
+    return _match_prepared_entry(bib_entry, _prepare_references(crawled_references), min_similarity_threshold)
 
-    bib_authors = []
-    for a in (bib_entry.get("authors") or []):
-        if not a:
-            continue
-        name = a.get("name", "") if isinstance(a, dict) else str(a)
-        tokens = name.strip().lower().split()
-        if tokens:
-            bib_authors.append(tokens[-1])
-    bib_year = bib_entry.get("year")
 
-    best_match_arxiv_id: Optional[str] = None
-    best_score = 0.0
-
-    for ref in crawled_references:
-        ref_arxiv_id = normalize_arxiv_id(ref.get("ref_arxiv_id") or ref.get("externalIds", {}).get("ArXiv"))
-        if not ref_arxiv_id:
-            continue
-
-        ref_title = normalize_text(ref.get("ref_title") or ref.get("title", ""))
-        ref_tokens = _title_tokens(ref_title)
-        if not ref_tokens:
-            continue
-
-        # 1. Jaccard similarity trên tiêu đề
-        intersection = bib_tokens.intersection(ref_tokens)
-        union = bib_tokens.union(ref_tokens)
-        title_score = len(intersection) / len(union) if union else 0.0
-
-        # Nếu tiêu đề khớp hoàn toàn
-        if bib_title.lower() == ref_title.lower():
-            title_score = 1.0
-
-        # 2. Author overlap (xử lý an toàn cả string lẫn dict từ Semantic Scholar)
-        ref_authors = []
-        for a in (ref.get("ref_authors") or ref.get("authors") or []):
-            if not a:
-                continue
-            name = a.get("name", "") if isinstance(a, dict) else str(a)
-            tokens = name.strip().lower().split()
-            if tokens:
-                ref_authors.append(tokens[-1])
-
-        author_match = any(a in ref_authors for a in bib_authors) if bib_authors and ref_authors else False
-        author_bonus = 0.15 if author_match else 0.0
-
-        # 3. Year match
-        ref_date = str(ref.get("ref_submission_date") or ref.get("publicationDate") or ref.get("year") or ref.get("ref_year") or "")
-        year_match = (str(bib_year) in ref_date) if bib_year and ref_date else False
-        year_bonus = 0.10 if year_match else 0.0
-
-        total_score = title_score + author_bonus + year_bonus
-
-        if total_score > best_score:
-            best_score = total_score
-            best_match_arxiv_id = ref_arxiv_id
-
-    if best_score >= min_similarity_threshold:
-        return best_match_arxiv_id
-
-    return None
+def heuristic_match_publication(
+    bib_entries: Sequence[Dict[str, Any]],
+    crawled_references: Sequence[Dict[str, Any]],
+    min_similarity_threshold: float = 0.65,
+) -> Dict[str, Optional[str]]:
+    """Precompute reference features once per publication and match every BibTeX entry."""
+    prepared_refs = _prepare_references(crawled_references)
+    return {
+        str(entry["citation_key"]): _match_prepared_entry(entry, prepared_refs, min_similarity_threshold)
+        for entry in bib_entries
+    }
