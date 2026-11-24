@@ -13,6 +13,7 @@ import json
 import math
 import os
 import pickle
+import random
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -244,7 +245,9 @@ def run_matching_pipeline(
             f"Only {len(auto_candidates)} publications can be automatically matched; "
             f"the 10% gate requires {required_auto}."
         )
-    auto_ids = auto_candidates[:required_auto]
+    auto_ids = sorted(
+        random.Random(random_seed).sample(auto_candidates, required_auto)
+    )
     selected_ids = manual_ids | set(auto_ids)
     selected_bibtex = bibtex_table.filter(
         pc.is_in(
