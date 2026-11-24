@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from src.cli import main
+from src.storage import BIBTEX_SCHEMA, read_sharded_parquet
 
 
 def test_run_parsing_builds_and_validates_all_three_m2_tables(tmp_path: Path) -> None:
@@ -90,7 +91,7 @@ This is a complete sentence.
     assert (tmp_path / "tables/bibtex/part-00000.parquet").is_file()
 
 
-def test_run_parsing_persists_failure_summary_before_cli_error(tmp_path: Path) -> None:
+def test_run_parsing_preserves_raw_bibtex_when_title_is_missing(tmp_path: Path) -> None:
     tasks = tmp_path / "manifests/discovery/version_tasks.csv"
     tasks.parent.mkdir(parents=True)
     tasks.write_text(
@@ -121,23 +122,25 @@ def test_run_parsing_persists_failure_summary_before_cli_error(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit) as raised:
-        main(
-            [
-                "run-parsing",
-                "--data-dir",
-                str(tmp_path),
-                "--member",
-                "member-1",
-            ]
-        )
+    assert main(
+        [
+            "run-parsing",
+            "--data-dir",
+            str(tmp_path),
+            "--member",
+            "member-1",
+        ]
+    ) == 0
 
-    assert raised.value.code == 2
-    failure = json.loads(
+    summary = json.loads(
         (tmp_path / "manifests/parsing/m2_run_summary.json").read_text(
             encoding="utf-8"
         )
     )
-    assert failure["is_success"] is False
-    assert failure["error_type"] == "ValueError"
-    assert "title" in failure["error_message"]
+    assert summary["is_success"] is True
+    assert summary["standardization"]["title_from_raw"] == 1
+
+    bibtex = read_sharded_parquet(
+        tmp_path / "tables/bibtex", BIBTEX_SCHEMA
+    ).to_pylist()
+    assert bibtex[0]["title"] == "Example, Alice, 2020"

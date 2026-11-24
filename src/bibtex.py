@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import gzip
 import re
 import unicodedata
 from datetime import date
@@ -416,6 +417,12 @@ def _citation_rows(arxiv_id: str, version: int, keys: list[str], canonical: set[
 # ---------------------------------------------------------------- stage runner
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    compressed = path.with_suffix(path.suffix + ".gz")
+    if compressed.is_file():
+        path = compressed
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 

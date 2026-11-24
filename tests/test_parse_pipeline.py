@@ -1,5 +1,6 @@
 import csv
 import json
+import gzip
 from pathlib import Path
 
 from src.parse_pipeline import run_parse_pipeline
@@ -37,18 +38,20 @@ def test_parse_pipeline_keeps_empty_versions_and_deduplicates_across_versions(tm
     result = run_parse_pipeline(data_dir=data, member_id="member-2")
     assert result["version_count"] == 4
     assert result["empty_no_tex_bib"] == 1
-    elements = [json.loads(x) for x in (data/"parsed/elements.jsonl").read_text().splitlines()]
-    hierarchy = [json.loads(x) for x in (data/"parsed/hierarchy.jsonl").read_text().splitlines()]
+    with gzip.open(data / "parsed/elements.jsonl.gz", "rt", encoding="utf-8") as handle:
+        elements = [json.loads(x) for x in handle]
+    with gzip.open(data / "parsed/hierarchy.jsonl.gz", "rt", encoding="utf-8") as handle:
+        hierarchy = [json.loads(x) for x in handle]
     sentence_rows = [x for x in elements if x["kind"] == "sentence"]
     assert len(sentence_rows) == 2  # dedup within a paper's versions, not across papers
     sentence_id = next(x["element_id"] for x in sentence_rows if x["arxiv_id"] == "2509.21047")
     assert sum(x["element_id"] == sentence_id for x in hierarchy) == 2
     assert result["contract_reconciliation"]["is_complete"] is True
 
-    first_elements = (data / "parsed/elements.jsonl").read_bytes()
+    first_elements = (data / "parsed/elements.jsonl.gz").read_bytes()
     resumed = run_parse_pipeline(data_dir=data, member_id="member-2", resume=True)
     assert resumed["resumed_versions"] == 4
-    assert (data / "parsed/elements.jsonl").read_bytes() == first_elements
+    assert (data / "parsed/elements.jsonl.gz").read_bytes() == first_elements
 
 
 def test_parse_checkpoint_invalidates_when_source_fingerprint_changes(tmp_path):
@@ -107,3 +110,40 @@ def test_parse_checkpoint_invalidates_when_source_fingerprint_changes(tmp_path):
     write_status("source-two")
     invalidated = run_parse_pipeline(data_dir=data, member_id="member-1")
     assert invalidated["resumed_versions"] == 0
+
+
+def test_streaming_assembly_keeps_one_parent_for_repeated_content(tmp_path):
+    data = tmp_path
+    tasks = data / "manifests/discovery/version_tasks.csv"
+    tasks.parent.mkdir(parents=True)
+    tasks.write_text(
+        "member_id,arxiv_id,versioned_arxiv_id,version\n"
+        "member-1,2509.16047,2509.16047v1,1\n",
+        encoding="utf-8",
+    )
+    status = {
+        "member_id": "member-1",
+        "arxiv_id": "2509.16047",
+        "versioned_arxiv_id": "2509.16047v1",
+        "version": 1,
+        "status": "success",
+        "download": {"sha256": "archive"},
+        "extraction": {"files": [{"path": "main.tex", "sha256": "main"}]},
+    }
+    (data / "manifests/source_status.jsonl").write_text(
+        json.dumps(status) + "\n", encoding="utf-8"
+    )
+    source = data / "corpus/tex/2509.16047/2509.16047v1"
+    source.mkdir(parents=True)
+    source.joinpath("main.tex").write_text(
+        r"\documentclass{article}\begin{document}"
+        r"\section{One}Repeated sentence.\section{Two}Repeated sentence."
+        r"\end{document}",
+        encoding="utf-8",
+    )
+
+    run_parse_pipeline(data_dir=data, member_id="member-1")
+    with gzip.open(data / "parsed/hierarchy.jsonl.gz", "rt", encoding="utf-8") as handle:
+        rows = [json.loads(line) for line in handle]
+    children = [(row["arxiv_id"], row["version"], row["element_id"]) for row in rows]
+    assert len(children) == len(set(children))

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
+import io
 import json
 from collections import Counter
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -41,7 +44,7 @@ def run_parse_pipeline(
         parsing_manifest_dir / "m2_inputs.jsonl", inputs, reconciliation
     )
 
-    version_results: list[dict[str, Any]] = []
+    checkpoint_specs: list[tuple[Path, str, bool]] = []
     resumed_count = 0
     for item in inputs:
         checkpoint_fingerprint = _checkpoint_fingerprint(item.source_fingerprint)
@@ -50,21 +53,22 @@ def run_parse_pipeline(
             / "checkpoints"
             / "parsing"
             / item.arxiv_id
-            / f"{item.versioned_arxiv_id}.json"
+            / f"{item.versioned_arxiv_id}.json.gz"
         )
         cached = (
-            _load_checkpoint(checkpoint, expected_fingerprint=checkpoint_fingerprint)
+            _load_checkpoint_with_legacy_fallback(
+                checkpoint, expected_fingerprint=checkpoint_fingerprint
+            )
             if resume
             else None
         )
         if cached is not None:
-            result = cached
-            result["resumed"] = True
             resumed_count += 1
+            was_resumed = True
         else:
             result = _parse_input(root, item.to_dict())
-            result["resumed"] = False
-            _write_json_atomic(
+            was_resumed = False
+            _write_json_gzip_atomic(
                 checkpoint,
                 {
                     "parser_schema_version": PARSER_SCHEMA_VERSION,
@@ -72,44 +76,17 @@ def run_parse_pipeline(
                     "result": result,
                 },
             )
-        version_results.append(result)
-
-    elements_rows, hierarchy_rows, deduplicated_nodes = _assemble_tables(
-        version_results
-    )
-    status_rows = [
-        {
-            key: result[key]
-            for key in (
-                "member_id",
-                "arxiv_id",
-                "versioned_arxiv_id",
-                "version",
-                "status",
-                "input_status",
-                "source_stage_status",
-                "source_fingerprint",
-                "reachable_files",
-                "unused_tex_files",
-                "diagnostics",
-                "resumed",
-            )
-        }
-        for result in version_results
-    ]
+        checkpoint_specs.append((checkpoint, checkpoint_fingerprint, was_resumed))
 
     out = root / "parsed"
     out.mkdir(parents=True, exist_ok=True)
-    _write_jsonl_atomic(out / "elements.jsonl", elements_rows)
-    _write_jsonl_atomic(out / "hierarchy.jsonl", hierarchy_rows)
-    _write_jsonl_atomic(out / "parse_status.jsonl", status_rows)
-
-    status_counts = Counter(result["status"] for result in version_results)
-    kind_counts = Counter(row["kind"] for row in elements_rows)
+    assembly = _assemble_checkpoints_streaming(checkpoint_specs, out)
+    status_counts = assembly["status_counts"]
+    kind_counts = assembly["kind_counts"]
     summary = {
         "parser_schema_version": PARSER_SCHEMA_VERSION,
         "contract_reconciliation": reconciliation,
-        "version_count": len(version_results),
+        "version_count": len(checkpoint_specs),
         "resumed_versions": resumed_count,
         "parsed_success": status_counts["success"],
         "empty_no_tex_bib": status_counts["no_tex_bib"],
@@ -119,14 +96,95 @@ def run_parse_pipeline(
             if status not in {"success", "no_tex_bib"}
         ),
         "status_counts": dict(sorted(status_counts.items())),
-        "elements_distinct": len(elements_rows),
-        "hierarchy_edges": len(hierarchy_rows),
-        "deduplicated_nodes": deduplicated_nodes,
+        "elements_distinct": assembly["elements_distinct"],
+        "hierarchy_edges": assembly["hierarchy_edges"],
+        "deduplicated_nodes": assembly["deduplicated_nodes"],
         "kind_counts": dict(sorted(kind_counts.items())),
         "output_dir": "parsed",
     }
     _write_json_atomic(out / "parse_summary.json", summary)
     return summary
+
+
+def _assemble_checkpoints_streaming(
+    checkpoint_specs: list[tuple[Path, str, bool]], out: Path
+) -> dict[str, Any]:
+    """Assemble gzip JSONL without retaining full checkpoint payloads in RAM."""
+    targets = {
+        "elements": out / "elements.jsonl.gz",
+        "hierarchy": out / "hierarchy.jsonl.gz",
+        "status": out / "parse_status.jsonl.gz",
+    }
+    temporary = {name: path.with_suffix(path.suffix + ".tmp") for name, path in targets.items()}
+    seen_elements: set[str] = set()
+    status_counts: Counter[str] = Counter()
+    kind_counts: Counter[str] = Counter()
+    occurrences = 0
+    hierarchy_edges = 0
+    seen_version_children: set[tuple[str, int, str]] = set()
+    status_keys = (
+        "member_id", "arxiv_id", "versioned_arxiv_id", "version", "status",
+        "input_status", "source_stage_status", "source_fingerprint",
+        "reachable_files", "unused_tex_files", "diagnostics",
+    )
+
+    with _deterministic_gzip_text_writer(temporary["elements"]) as elements_out, \
+         _deterministic_gzip_text_writer(temporary["hierarchy"]) as hierarchy_out, \
+         _deterministic_gzip_text_writer(temporary["status"]) as status_out:
+        for checkpoint, fingerprint, was_resumed in checkpoint_specs:
+            result = _load_checkpoint_with_legacy_fallback(
+                checkpoint, expected_fingerprint=fingerprint
+            )
+            if result is None:
+                raise ValueError(f"Missing or invalid parsing checkpoint: {checkpoint}")
+            status_counts[result["status"]] += 1
+            status_row = {key: result[key] for key in status_keys}
+            status_row["resumed"] = was_resumed
+            status_out.write(json.dumps(status_row, ensure_ascii=False, sort_keys=True) + "\n")
+
+            local_ids: dict[str, str] = {}
+            nodes = [Element(**payload) for payload in result["elements"]]
+            for node in nodes:
+                occurrences += 1
+                final_kind = FINAL_KIND_MAP.get(node.kind, node.kind)
+                element_id = _content_element_id(result["arxiv_id"], final_kind, node.content)
+                local_ids[node.element_id] = element_id
+                if element_id in seen_elements:
+                    continue
+                seen_elements.add(element_id)
+                kind_counts[final_kind] += 1
+                elements_out.write(json.dumps({
+                    "element_id": element_id,
+                    "arxiv_id": result["arxiv_id"],
+                    "kind": final_kind,
+                    "content": node.content,
+                }, ensure_ascii=False, sort_keys=True) + "\n")
+            for node in nodes:
+                if node.parent_id is None:
+                    continue
+                child_key = (
+                    result["arxiv_id"], int(result["version"]), local_ids[node.element_id]
+                )
+                if child_key in seen_version_children:
+                    continue
+                seen_version_children.add(child_key)
+                hierarchy_edges += 1
+                hierarchy_out.write(json.dumps({
+                    "arxiv_id": result["arxiv_id"],
+                    "version": int(result["version"]),
+                    "element_id": local_ids[node.element_id],
+                    "parent_id": local_ids[node.parent_id],
+                }, ensure_ascii=False, sort_keys=True) + "\n")
+
+    for name, path in targets.items():
+        temporary[name].replace(path)
+    return {
+        "status_counts": status_counts,
+        "kind_counts": kind_counts,
+        "elements_distinct": len(seen_elements),
+        "hierarchy_edges": hierarchy_edges,
+        "deduplicated_nodes": occurrences - len(seen_elements),
+    }
 
 
 def _parse_input(root: Path, item: dict[str, Any]) -> dict[str, Any]:
@@ -257,8 +315,12 @@ def _load_checkpoint(
     if not path.is_file():
         return None
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        if path.suffix == ".gz":
+            with gzip.open(path, "rt", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        else:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, EOFError, json.JSONDecodeError):
         return None
     if (
         payload.get("parser_schema_version") != PARSER_SCHEMA_VERSION
@@ -267,6 +329,18 @@ def _load_checkpoint(
     ):
         return None
     return payload["result"]
+
+
+def _load_checkpoint_with_legacy_fallback(
+    compressed_path: Path, *, expected_fingerprint: str
+) -> dict[str, Any] | None:
+    cached = _load_checkpoint(
+        compressed_path, expected_fingerprint=expected_fingerprint
+    )
+    if cached is not None:
+        return cached
+    legacy_path = compressed_path.with_suffix("")
+    return _load_checkpoint(legacy_path, expected_fingerprint=expected_fingerprint)
 
 
 def _write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -281,6 +355,26 @@ def _write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
     temporary.replace(path)
 
 
+def _write_jsonl_gzip_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=6, mtime=0) as zipped:
+            with io.TextIOWrapper(zipped, encoding="utf-8") as handle:
+                for row in rows:
+                    handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    temporary.replace(path)
+
+
+@contextmanager
+def _deterministic_gzip_text_writer(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=6, mtime=0) as zipped:
+            with io.TextIOWrapper(zipped, encoding="utf-8") as handle:
+                yield handle
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -289,4 +383,15 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         handle.flush()
         import os
         os.fsync(handle.fileno())
+    temporary.replace(path)
+
+
+def _write_json_gzip_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=6, mtime=0) as zipped:
+            with io.TextIOWrapper(zipped, encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+                handle.write("\n")
     temporary.replace(path)

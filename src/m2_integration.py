@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 from pathlib import Path
 from typing import Any
 
@@ -30,8 +31,8 @@ def build_m2_tables(*, data_dir: str | Path) -> dict[str, Any]:
     root = Path(data_dir)
     parsed = root / "parsed"
     required = {
-        "elements": parsed / "elements.jsonl",
-        "hierarchy": parsed / "hierarchy.jsonl",
+        "elements": _artifact_path(parsed / "elements.jsonl"),
+        "hierarchy": _artifact_path(parsed / "hierarchy.jsonl"),
         "bibtex": parsed / "bibtex.jsonl",
     }
     missing = [name for name, path in required.items() if not path.is_file()]
@@ -77,7 +78,7 @@ def validate_m2_tables(*, data_dir: str | Path) -> dict[str, Any]:
         validate_bibtex_table(bibtex, papers_table=papers),
     ]
     m2_inputs = _read_jsonl(root / "manifests/parsing/m2_inputs.jsonl")
-    parse_status = _read_jsonl(root / "parsed/parse_status.jsonl")
+    parse_status = _read_jsonl(_artifact_path(root / "parsed/parse_status.jsonl"))
     expected_keys = [str(row["versioned_arxiv_id"]) for row in m2_inputs]
     actual_keys = [str(row["versioned_arxiv_id"]) for row in parse_status]
     duplicate_inputs = len(expected_keys) - len(set(expected_keys))
@@ -111,7 +112,12 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         raise FileNotFoundError(f"Missing M2 artifact: {path}")
     rows = []
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    else:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    for line_number, line in enumerate(lines, 1):
         if not line.strip():
             continue
         try:
@@ -126,6 +132,13 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
             )
         rows.append(row)
     return rows
+
+
+def _artifact_path(plain_path: Path) -> Path:
+    compressed = plain_path.with_suffix(plain_path.suffix + ".gz")
+    if compressed.is_file():
+        return compressed
+    return plain_path
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
