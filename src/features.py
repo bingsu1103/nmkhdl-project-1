@@ -9,9 +9,10 @@ Nhiệm vụ:
 
 from __future__ import annotations
 
-import difflib
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+from rapidfuzz.distance import Levenshtein
 
 from src.normalize import normalize_arxiv_id, normalize_text
 
@@ -165,7 +166,7 @@ def extract_pair_features(
     clean_bt = re.sub(r"[^\w\s]", "", bib_title.lower()).strip()
     clean_rt = re.sub(r"[^\w\s]", "", ref_title.lower()).strip()
     if clean_bt and clean_rt:
-        title_edit_ratio = difflib.SequenceMatcher(None, clean_bt, clean_rt).ratio()
+        title_edit_ratio = Levenshtein.normalized_similarity(clean_bt, clean_rt)
     else:
         title_edit_ratio = 0.0
 
