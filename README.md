@@ -468,24 +468,26 @@ Hiện full Semantic Scholar/tables/validation của M1 vẫn phải hoàn tất
 
 ## Milestone 3 — matching trên dữ liệu thật
 
-Sau khi M1 và M2 pass validation, tạo gói review thủ công đúng quota cá nhân:
+Sau khi M1 và M2 pass validation, có thể tạo gói review thủ công hoặc bộ nhãn
+assisted chỉ nhận unique exact-title evidence. Lệnh đã dùng cho full shard
+Member 1:
 
 ```bash
-.venv/bin/python -m src.cli prepare-matching-labels \
+.venv/bin/python -m src.cli assist-matching-labels \
   --data-dir ../nmkhdl-project-1-data \
-  --output ../nmkhdl-project-1-data/labels/member-1-review.jsonl \
+  --output ../nmkhdl-project-1-data/labels/member-1-assisted.jsonl \
   --publication-count 5 \
-  --min-entries 20
+  --entries-per-publication 20
 ```
 
-Người gán nhãn phải kiểm tra từng suggestion và đổi `review_status` từ
-`pending` sang `reviewed`; pipeline không tự nhận suggestion là ground truth.
-Sau review, chạy:
+Mỗi dòng assisted giữ cả BibTeX title, reference title, reviewer provenance và
+evidence note; tool không chấp nhận fuzzy suggestion làm ground truth. Sau đó
+chạy:
 
 ```bash
 .venv/bin/python -m src.cli run-matching \
   --data-dir ../nmkhdl-project-1-data \
-  --manual-labels ../nmkhdl-project-1-data/labels/member-1-review.jsonl \
+  --manual-labels ../nmkhdl-project-1-data/labels/member-1-assisted.jsonl \
   --assigned-publication-count 5000 \
   --num-members 1 \
   --random-seed 42
@@ -495,6 +497,9 @@ Workflow kiểm tra quota cá nhân, tạo automatic pool ít nhất 10% phần 
 split publication-disjoint, chọn heuristic/logistic chỉ bằng validation, tính
 test MRR@5 một lần, validate foreign keys và ghi `predictions` Parquet cùng
 `manifests/matching/m3_run_summary.json`.
+
+Kết quả full shard Member 1 đã kiểm chứng được ghi tại
+[`docs/member-1-m3-full-shard.md`](docs/member-1-m3-full-shard.md).
 
 ## Exit codes
 
