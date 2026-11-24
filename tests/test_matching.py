@@ -420,3 +420,267 @@ def test_features_and_rankers_end_to_end():
     for p in preds_ml:
         c_list = [p[f"cand_{i}"] for i in range(1, 6) if p[f"cand_{i}"] is not None]
         assert len(c_list) == len(set(c_list))
+
+    # 4. Kiểm tra HistGradientBoostingClassifier trong LearnedRanker
+    hgb_ranker = LearnedRanker(model_type="hist_gb", max_iter=20, random_state=42)
+    hgb_ranker.fit(X, y)
+    assert hgb_ranker.is_fitted
+    preds_hgb = predict_top_k_candidates(bib_entries[30:40], cands, model=hgb_ranker, k=5)
+    assert len(preds_hgb) == 10
+
+
+def test_train_and_predict_end_to_end():
+    """Kiểm tra pipeline Bước 3 hoàn chỉnh trên dữ liệu mock chuẩn schema."""
+    import json
+    from scripts.train_and_predict import run_training_and_prediction
+    from src.storage import PAPERS_SCHEMA, write_sharded_parquet
+
+    data = generate_mock_matching_dataset(num_pubs=10, refs_per_pub=6, entries_per_pub=20, seed=42)
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        tables_dir = data_dir / "tables"
+        papers = [
+            {
+                "arxiv_id": aid,
+                "title": f"Paper {aid}",
+                "authors": ["Author"],
+                "submission_date": "2024-09-01T00:00:00Z",
+                "revised_dates": [],
+                "venue": None,
+            }
+            for aid in sorted({r["arxiv_id"] for r in data["bibtex"]})
+        ]
+        write_sharded_parquet(create_table_from_records(papers, PAPERS_SCHEMA), tables_dir, "papers")
+        write_sharded_parquet(create_table_from_records(data["bibtex"], BIBTEX_SCHEMA), tables_dir, "bibtex")
+        write_sharded_parquet(create_table_from_records(data["references"], REFERENCES_SCHEMA), tables_dir, "references")
+
+        by_pub = {}
+        for r in data["bibtex"]:
+            by_pub.setdefault(r["arxiv_id"], []).append(r)
+        pub_ids = sorted(by_pub)
+
+        def _write_manifest(path: Path, aids: list[str], method: str) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            pubs, labels = [], []
+            for aid in aids:
+                entries = by_pub[aid]
+                pubs.append({
+                    "arxiv_id": aid,
+                    "method": method,
+                    "labeled_by": "test",
+                    "entries_count": len(entries),
+                    "labeled_count": len(entries),
+                    "matched_count": sum(1 for e in entries if e["groundtruth_arxiv_id"]),
+                })
+                for e in entries:
+                    labels.append({
+                        "arxiv_id": aid,
+                        "citation_key": e["citation_key"],
+                        "groundtruth_arxiv_id": e["groundtruth_arxiv_id"],
+                        "method": method,
+                    })
+            path.write_text(json.dumps({"selected_papers": aids, "publications": pubs, "labels": labels}), encoding="utf-8")
+
+        m_path = data_dir / "matching" / "manual_labels.json"
+        a_path = data_dir / "matching" / "auto_labels.json"
+        _write_manifest(m_path, pub_ids[:5], "manual")
+        _write_manifest(a_path, pub_ids[5:], "automatic")
+
+        ok, summary = run_training_and_prediction(
+            data_dir=data_dir,
+            manual_paths=[m_path],
+            auto_paths=[a_path],
+            num_members=1,
+            seed=42,
+            negative_ratio=5,
+            max_train_entries_per_pub=0,
+            eval_only=False,
+            output_tables_dir=tables_dir,
+            report_output=data_dir / "matching" / "report.json",
+            split_output=data_dir / "matching" / "split.json",
+        )
+        assert ok and summary["predictions_output"]["is_valid"], summary
+        assert summary["predictions_output"]["total_rows"] == 200
+        assert len(summary["model_comparison"]) == 5
+
+
+def test_model_edge_cases():
+    """Kiểm tra các tình huống biên trong src/model.py (numpy, 1-class, weights={}, split_manifest v1, mock>=100)."""
+    import numpy as np
+
+    # 1. HeuristicRanker(weights={}) không bị ghi đè về mặc định
+    empty_w = HeuristicRanker(weights={})
+    assert empty_w.weights == {}
+    assert empty_w.score_pair({"title": "A"}, {"ref_title": "A"}) == 0.0
+
+    # 2. LearnedRanker.fit với numpy.ndarray & 1 lớp duy nhất (classes_=[0])
+    X_np = np.zeros((4, 11), dtype=float)
+    y_zero = np.zeros(4, dtype=int)
+    rf = LearnedRanker(model_type="random_forest", n_estimators=5, random_state=42)
+    rf.fit(X_np, y_zero)
+    assert rf.score_pair({"title": "A"}, {"ref_title": "A"}) == 0.0
+    assert rf.rank_candidates({"title": "A"}, [{"ref_arxiv_id": "2401.00001", "ref_title": "A"}]) == [("2401.00001", 0.0)]
+
+    # 3. Khử trùng reference trong build_pairwise_dataset & chuẩn hóa split_manifest key
+    bib = [{"arxiv_id": "2409.16241", "citation_key": "k1", "title": "Test", "groundtruth_arxiv_id": "2401.00001"}]
+    dup_refs = [
+        {"arxiv_id": "2409.16241", "ref_arxiv_id": "2401.00001v1", "ref_title": "Test"},
+        {"arxiv_id": "2409.16241", "ref_arxiv_id": "2401.00001", "ref_title": "Test dup"},
+    ]
+    X_pair, y_pair, _ = build_pairwise_dataset(bib, dup_refs)
+    assert len(X_pair) == 1 and y_pair == [1]
+
+    preds = predict_top_k_candidates(bib, dup_refs, model=HeuristicRanker(), split_manifest={"2409.16241v2": "test"})
+    assert len(preds) == 1 and preds[0]["partition"] == "test" and preds[0]["cand_1"] == "2401.00001"
+
+    # 4. generate_mock_matching_dataset với refs_per_pub >= 100 và metadata pool đầy đủ
+    mock_data = generate_mock_matching_dataset(num_pubs=6, refs_per_pub=105, entries_per_pub=20, seed=7)
+    assert all(len(r["ref_arxiv_id"].split(".")[0]) == 4 for r in mock_data["references"])
+    assert all("method" in p and "labeled_count" in p and "matched_count" in p for p in mock_data["manual_pool"])
+
+
+def test_feature_extraction_edge_cases():
+    """Kiểm tra Null-safe title, LaTeX/Unicode tác giả, lọc 'others', arXiv ở note/booktitle và dedupe matrix."""
+    from src.features import extract_author_tokens, extract_candidate_feature_matrix
+
+    # 1. Null-safe title & note/booktitle arXiv extraction
+    f = extract_pair_features(
+        {"title": None, "authors": ["M{\\\"u}ller, Hans and others"], "note": "arXiv:2301.12345"},
+        {"ref_title": None, "ref_authors": ["Hans Müller"], "ref_arxiv_id": "2301.12345"},
+    )
+    assert f["first_author_match"] == 1.0
+    assert f["author_set_overlap"] == 1.0
+    assert f["arxiv_id_match"] == 1.0
+
+    # 2. Lọc 'others' / 'et al.' khỏi tập họ tác giả
+    first_a, all_a = extract_author_tokens("Vaswani, Ashish and others")
+    assert first_a == "vaswani" and all_a == {"vaswani"}
+
+    # 3. extract_candidate_feature_matrix khử trùng candidate và đọc externalIds['ArXiv']
+    X_mat, meta_mat = extract_candidate_feature_matrix(
+        [{"arxiv_id": "2409.16241", "citation_key": "k1", "title": "Test", "booktitle": "arXiv:2301.12345"}],
+        [
+            {"arxiv_id": "2409.16241", "externalIds": {"ArXiv": "2301.12345v1"}, "ref_title": "Test"},
+            {"arxiv_id": "2409.16241", "ref_arxiv_id": "2301.12345", "ref_title": "Test dup"},
+        ],
+    )
+    assert len(X_mat) == 1 and len(meta_mat) == 1 and meta_mat[0]["ref_arxiv_id"] == "2301.12345"
+
+
+def test_load_label_manifests_rejects_duplicate_publication():
+    """Kiểm tra _load_label_manifests báo lỗi nếu 2 file thành viên chứa trùng bài báo."""
+    import json
+    from scripts.train_and_predict import _load_label_manifests
+
+    with tempfile.TemporaryDirectory() as tmp:
+        p1 = Path(tmp) / "m1.json"
+        p2 = Path(tmp) / "m2.json"
+        payload = {
+            "publications": [{"arxiv_id": "2409.16241", "entries_count": 20}],
+            "labels": [{"arxiv_id": "2409.16241", "citation_key": "k1", "groundtruth_arxiv_id": None}],
+        }
+        p1.write_text(json.dumps(payload), encoding="utf-8")
+        p2.write_text(json.dumps(payload), encoding="utf-8")
+        with pytest.raises(ValueError, match="Duplicate publication 2409.16241"):
+            _load_label_manifests([p1, p2], "manual")
+
+
+def test_train_and_predict_multi_data_dir_and_quota():
+    """Kiểm tra gộp nhiều --data-dir từ nhiều thành viên, validate_labeling_quota và ưu tiên ML model."""
+    import json
+    from scripts.train_and_predict import run_training_and_prediction
+    from src.storage import PAPERS_SCHEMA, write_sharded_parquet
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dirs: list[Path] = []
+        manual_paths: list[Path] = []
+        auto_paths: list[Path] = []
+
+        # Tạo 2 shard riêng cho member-1 và member-2 (mỗi shard 10 bài: 5 manual + 5 auto)
+        for m_idx in (1, 2):
+            d = root / f"member-{m_idx}"
+            dirs.append(d)
+            data = generate_mock_matching_dataset(num_pubs=10, refs_per_pub=6, entries_per_pub=20, seed=40 + m_idx)
+            # Đổi prefix arxiv_id theo từng member để không trùng giữa 2 shard
+            prefix = f"250{m_idx}"
+            for row in data["papers"]:
+                row["arxiv_id"] = prefix + row["arxiv_id"][4:]
+            for row in data["references"]:
+                row["arxiv_id"] = prefix + row["arxiv_id"][4:]
+            for row in data["bibtex"]:
+                row["arxiv_id"] = prefix + row["arxiv_id"][4:]
+
+            tables_dir = d / "tables"
+            write_sharded_parquet(create_table_from_records(data["papers"], PAPERS_SCHEMA), tables_dir, "papers")
+            write_sharded_parquet(create_table_from_records(data["bibtex"], BIBTEX_SCHEMA), tables_dir, "bibtex")
+            write_sharded_parquet(create_table_from_records(data["references"], REFERENCES_SCHEMA), tables_dir, "references")
+
+            by_pub = {}
+            for r in data["bibtex"]:
+                by_pub.setdefault(r["arxiv_id"], []).append(r)
+            pub_ids = sorted(by_pub)
+
+            def _write(path: Path, aids: list[str], method: str) -> None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                pubs, labels = [], []
+                for aid in aids:
+                    entries = by_pub[aid]
+                    pubs.append({
+                        "arxiv_id": aid,
+                        "method": method,
+                        "labeled_by": f"member-{m_idx}",
+                        "entries_count": len(entries),
+                        "labeled_count": len(entries),
+                        "matched_count": sum(1 for e in entries if e["groundtruth_arxiv_id"]),
+                    })
+                    for e in entries:
+                        labels.append({
+                            "arxiv_id": aid,
+                            "citation_key": e["citation_key"],
+                            "groundtruth_arxiv_id": e["groundtruth_arxiv_id"],
+                            "method": method,
+                        })
+                path.write_text(json.dumps({"selected_papers": aids, "publications": pubs, "labels": labels}), encoding="utf-8")
+
+            m_file = d / "matching" / "manual_labels.json"
+            a_file = d / "matching" / "auto_labels.json"
+            _write(m_file, pub_ids[:5], "manual")
+            _write(a_file, pub_ids[5:], "automatic")
+            manual_paths.append(m_file)
+            auto_paths.append(a_file)
+
+        # Kiểm tra chặn quota nếu khai báo num_members=5 khi mới có dữ liệu của 2 thành viên
+        with pytest.raises(ValueError, match="Labeling quota validation failed"):
+            run_training_and_prediction(
+                data_dirs=dirs,
+                manual_paths=manual_paths,
+                auto_paths=auto_paths,
+                num_members=5,
+                seed=42,
+                negative_ratio=5,
+                max_train_entries_per_pub=0,
+                eval_only=True,
+                output_tables_dir=root / "merged_tables",
+                report_output=None,
+                split_output=None,
+            )
+
+        ok, summary = run_training_and_prediction(
+            data_dirs=dirs,
+            manual_paths=manual_paths,
+            auto_paths=auto_paths,
+            num_members=2,
+            seed=42,
+            negative_ratio=5,
+            max_train_entries_per_pub=0,
+            eval_only=False,
+            output_tables_dir=root / "merged_tables",
+            report_output=root / "merged_report.json",
+            split_output=root / "merged_split.json",
+        )
+        assert ok and summary["predictions_output"]["is_valid"], summary
+        assert summary["quota_validation"]["is_valid"] is True
+        assert summary["total_assigned_papers"] == 20
+        assert summary["predictions_output"]["total_rows"] == 400
+        assert summary["best_model"] != "heuristic_ranker"
