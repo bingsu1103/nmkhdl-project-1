@@ -225,6 +225,12 @@ Từ bản sửa idempotency ngày 11/11/2026, mỗi source run ghi audit của 
 
 Trạng thái Member 1 tại ngày 11/11/2026: discovery và source-version coverage đã xong; tổng được tái tính từ 7.858 record trong `manifests/source_status.jsonl`. `manifests/s2_summary.json` hiện chỉ thuộc smoke test 3 paper. Vì vậy Member 1 vẫn phải chạy full Semantic Scholar, build tables, validation và metrics trước khi có một handoff bundle hoàn chỉnh cho báo cáo M1.
 
+### Link gói bàn giao
+
+| Member | Range | Trạng thái | Link |
+|---|---|---|---|
+| member-3 | `2510.19401..2510.24400` | 14/11/2026: discovery, source, S2, build, validate pass | [Drive](https://drive.google.com/drive/folders/1Bfx1-5_W1EGb9DBhLvMi-cdP3h0DCCgV?usp=sharing) |
+
 ## Ví dụ run đã hoàn tất của Member 1
 
 Chạy riêng Member 1, output luôn nằm ngoài repository:
