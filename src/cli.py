@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import gzip
 import json
 import subprocess
 import time
@@ -43,12 +44,18 @@ from .m2_integration import (
     build_m2_tables,
     validate_m2_tables,
 )
+from .m3_integration import (
+    Milestone3IntegrationError,
+    prepare_manual_label_review,
+    run_matching_pipeline,
+)
 from .s2_client import (
     DONE_STATUSES,
     crawl_references,
     load_raw_references,
     summarize_s2_crawl,
 )
+from .s2_batch import crawl_references_batch
 
 EXIT_OK = 0
 EXIT_CONFIG_ERROR = 2
@@ -198,6 +205,10 @@ def build_parser() -> argparse.ArgumentParser:
     references.add_argument("--limit", type=int)
     references.add_argument("--max-attempts", type=int, default=4)
     references.add_argument("--timeout-seconds", type=float, default=30.0)
+    references.add_argument(
+        "--batch-size", type=int, default=10,
+        help="Use the official S2 batch endpoint; 10 is conservative for the 10 MB response limit.",
+    )
     references.set_defaults(handler=_crawl_references)
 
     build_tables = subparsers.add_parser(
@@ -230,6 +241,28 @@ def build_parser() -> argparse.ArgumentParser:
     _add_m1_workflow_arguments(benchmark)
     benchmark.set_defaults(handler=_run_all, benchmark_mode=True)
 
+    prepare_labels = subparsers.add_parser(
+        "prepare-matching-labels",
+        help="Prepare a compact real-data packet for required manual M3 review.",
+    )
+    prepare_labels.add_argument("--data-dir", type=Path, required=True)
+    prepare_labels.add_argument("--output", type=Path, required=True)
+    prepare_labels.add_argument("--publication-count", type=int, default=5)
+    prepare_labels.add_argument("--min-entries", type=int, default=20)
+    prepare_labels.add_argument("--max-entries", type=int, default=40)
+    prepare_labels.set_defaults(handler=_prepare_matching_labels)
+
+    run_matching = subparsers.add_parser(
+        "run-matching",
+        help="Run M3 labeling, split, training, evaluation and predictions gates.",
+    )
+    run_matching.add_argument("--data-dir", type=Path, required=True)
+    run_matching.add_argument("--manual-labels", type=Path, required=True)
+    run_matching.add_argument("--assigned-publication-count", type=int, required=True)
+    run_matching.add_argument("--num-members", type=int, default=1)
+    run_matching.add_argument("--random-seed", type=int, default=42)
+    run_matching.set_defaults(handler=_run_matching)
+
     return parser
 
 
@@ -242,6 +275,7 @@ def main(argv: list[str] | None = None) -> int:
         DiscoveryError,
         Milestone1IntegrationError,
         Milestone2IntegrationError,
+        Milestone3IntegrationError,
         ParsingContractError,
         RangeValidationError,
         VersionResolutionError,
@@ -250,6 +284,34 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         parser.error(str(exc))
     return EXIT_CONFIG_ERROR
+
+
+def _prepare_matching_labels(args: argparse.Namespace) -> int:
+    result = prepare_manual_label_review(
+        data_dir=_external_data_dir(args.data_dir),
+        output_path=args.output,
+        publication_count=args.publication_count,
+        min_entries=args.min_entries,
+        max_entries=args.max_entries,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK
+
+
+def _run_matching(args: argparse.Namespace) -> int:
+    if args.assigned_publication_count <= 0:
+        raise Milestone3IntegrationError("--assigned-publication-count must be positive")
+    if args.num_members <= 0:
+        raise Milestone3IntegrationError("--num-members must be positive")
+    result = run_matching_pipeline(
+        data_dir=_external_data_dir(args.data_dir),
+        manual_labels_path=args.manual_labels,
+        assigned_publication_count=args.assigned_publication_count,
+        num_members=args.num_members,
+        random_seed=args.random_seed,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+    return EXIT_OK
 
 
 def _validate_ranges(args: argparse.Namespace) -> int:
@@ -614,11 +676,17 @@ def _crawl_references(args: argparse.Namespace) -> int:
         selected_ids=set(args.paper),
         limit=args.limit,
     )
-    statuses = crawl_references(
+    crawler = crawl_references_batch if args.batch_size > 1 else crawl_references
+    crawler_kwargs = {
+        "max_retries": args.max_attempts,
+        "timeout": args.timeout_seconds,
+    }
+    if args.batch_size > 1:
+        crawler_kwargs["batch_size"] = args.batch_size
+    statuses = crawler(
         [paper.arxiv_id for paper in papers],
         data_dir / "raw" / "s2",
-        max_retries=args.max_attempts,
-        timeout=args.timeout_seconds,
+        **crawler_kwargs,
     )
     raw_records = load_raw_references(data_dir / "raw" / "s2")
     summary = summarize_s2_crawl(statuses, raw_records)
@@ -950,8 +1018,16 @@ def _parse_month_ceilings(values: list[str]) -> dict[str, int]:
 
 def _read_jsonl_objects(path: Path) -> list[dict[str, object]]:
     try:
+        compressed = path.with_suffix(path.suffix + ".gz")
+        if compressed.is_file():
+            path = compressed
+        if path.suffix == ".gz":
+            with gzip.open(path, "rt", encoding="utf-8") as handle:
+                lines = handle.readlines()
+        else:
+            lines = path.read_text(encoding="utf-8").splitlines()
         rows: list[dict[str, object]] = []
-        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for line_number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
             row = json.loads(line)

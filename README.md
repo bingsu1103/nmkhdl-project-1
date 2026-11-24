@@ -174,8 +174,13 @@ Crawl references qua Semantic Scholar. API key là tùy chọn và chỉ đặt 
 caffeinate -i .venv/bin/python -m src.cli crawl-references \
   --owned-papers local/expanded_ids.csv \
   --data-dir "$MEMBER_DATA_DIR" \
-  --member "member-$MEMBER_NO"
+  --member "member-$MEMBER_NO" \
+  --batch-size 10
 ```
+
+Batch size 10 dùng endpoint batch chính thức nhưng vẫn lưu một cache JSON cho
+từng citing paper. Giá trị nhỏ này tránh giới hạn response 10 MB; dùng
+`--batch-size 1` khi cần chẩn đoán request đơn.
 
 Khi Semantic Scholar đã có terminal status cho mọi publication, tạo bảng và validate shard:
 
@@ -409,13 +414,13 @@ Output nằm ngoài Git:
 
 ```text
 <data-dir>/
-├── checkpoints/parsing/<arxiv-id>/<versioned-id>.json
+├── checkpoints/parsing/<arxiv-id>/<versioned-id>.json.gz
 ├── manifests/parsing/m2_inputs.jsonl
 ├── manifests/parsing/m2_input_reconciliation.json
 └── parsed/
-    ├── elements.jsonl
-    ├── hierarchy.jsonl
-    ├── parse_status.jsonl
+    ├── elements.jsonl.gz          # gzip để full-shard không làm đầy ổ
+    ├── hierarchy.jsonl.gz
+    ├── parse_status.jsonl.gz
     ├── parse_summary.json
     └── bibtex.jsonl              # adapter standardization/BibTeX của Member 3
 ```
@@ -460,6 +465,36 @@ Benchmark chính thức phải chạy trên Google Colab CPU-only và không reu
 Kết quả được ghi vào `metrics/m2_parsing_benchmark.json`, gồm wall time end-to-end, average/publication, peak RAM và disk/storage samples. Không dùng benchmark local làm kết quả Colab chính thức.
 
 Hiện full Semantic Scholar/tables/validation của M1 vẫn phải hoàn tất song song. Source coverage đủ để bắt đầu parsing, nhưng điều đó không đồng nghĩa toàn bộ M1 đã qua release gate.
+
+## Milestone 3 — matching trên dữ liệu thật
+
+Sau khi M1 và M2 pass validation, tạo gói review thủ công đúng quota cá nhân:
+
+```bash
+.venv/bin/python -m src.cli prepare-matching-labels \
+  --data-dir ../nmkhdl-project-1-data \
+  --output ../nmkhdl-project-1-data/labels/member-1-review.jsonl \
+  --publication-count 5 \
+  --min-entries 20
+```
+
+Người gán nhãn phải kiểm tra từng suggestion và đổi `review_status` từ
+`pending` sang `reviewed`; pipeline không tự nhận suggestion là ground truth.
+Sau review, chạy:
+
+```bash
+.venv/bin/python -m src.cli run-matching \
+  --data-dir ../nmkhdl-project-1-data \
+  --manual-labels ../nmkhdl-project-1-data/labels/member-1-review.jsonl \
+  --assigned-publication-count 5000 \
+  --num-members 1 \
+  --random-seed 42
+```
+
+Workflow kiểm tra quota cá nhân, tạo automatic pool ít nhất 10% phần còn lại,
+split publication-disjoint, chọn heuristic/logistic chỉ bằng validation, tính
+test MRR@5 một lần, validate foreign keys và ghi `predictions` Parquet cùng
+`manifests/matching/m3_run_summary.json`.
 
 ## Exit codes
 
