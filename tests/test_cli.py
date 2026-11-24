@@ -323,6 +323,8 @@ class CliTests(unittest.TestCase):
                                 str(root / "data"),
                                 "--member",
                                 "member-1",
+                                "--batch-size",
+                                "1",
                             ]
                         )
             self.assertEqual(code, 0)
