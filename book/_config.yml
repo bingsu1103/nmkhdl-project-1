@@ -1,9 +1,10 @@
-title: Báo cáo đồ án arXiv - Nhóm 18
-author: Nhóm 18 - Introduction to Data Science
+title: "Báo cáo đồ án arXiv — Nhóm 18"
+author: "Nhóm 18 — Introduction to Data Science"
 only_build_toc_files: true
 
 execute:
-  execute_notebooks: "off"
+  execute_notebooks: "force"
+  timeout: 600
 
 repository:
   url: https://github.com/bingsu1103/nmkhdl-project-1
@@ -14,7 +15,9 @@ html:
   use_repository_button: true
   use_issues_button: true
 
+bibtex_bibfiles:
+  - references.bib
+
 sphinx:
   config:
     language: vi
-

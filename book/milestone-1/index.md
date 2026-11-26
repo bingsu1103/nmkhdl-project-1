@@ -1,31 +1,66 @@
 # Milestone 1 — Crawling
 
-## 1.1. Giới thiệu
-### 1.1.1. Bối cảnh và động lực
-### 1.1.2. Mục tiêu của dự án
-### 1.1.3. Phạm vi Milestone 1
+## 1. Mục tiêu và phạm vi
 
-## 1.2. Phạm vi dữ liệu
-### 1.2.1. Nguồn dữ liệu
-### 1.2.2. Phạm vi ID bài báo
-### 1.2.3. Phân công dữ liệu giữa các thành viên
+Milestone 1 xây dựng tập dữ liệu nền từ các paper IDs arXiv được giảng viên phân công. Công việc gồm:
 
-## 1.3. Tổng quan hệ thống
-### 1.3.1. Kiến trúc tổng thể
-### 1.3.2. Luồng xử lý dữ liệu
-### 1.3.3. Các thành phần chính
+1. Khám phá metadata cho từng paper ID và xác định toàn bộ phiên bản.
+2. Tải source archive cho từng phiên bản, chỉ trích xuất tệp `.tex` và `.bib`.
+3. Thu thập reference metadata thông qua Semantic Scholar.
+4. Xây dựng hai bảng `papers` và `references`, sau đó kiểm định phạm vi, schema, tính duy nhất và quan hệ dữ liệu.
 
-## 1.4. Các giai đoạn của Milestone 1
-### 1.4.1. Entry Discovery
-### 1.4.2. Version Resolution
-### 1.4.3. Source Crawling
-### 1.4.4. Source Extraction
-### 1.4.5. Reference Crawling
-### 1.4.6. Storage and Validation
+Nhóm 18 được giao 25.000 candidate IDs, chia thành năm shard, mỗi thành viên 5.000 IDs. Chương này trước mắt báo cáo **shard Member 5**, không phải kết quả tổng hợp toàn nhóm.
 
-## 1.5. Kết quả tổng quan
-### 1.5.1. Tình trạng triển khai
-### 1.5.2. Phạm vi dữ liệu đã xử lý
-### 1.5.3. Các vấn đề còn tồn tại
+### Phạm vi Member 5
 
-## 1.6. Cấu trúc báo cáo
+| Khoảng ID inclusive | Số lượng |
+|---|---:|
+| `2510.24401`–`2510.27692` | 3.292 |
+| `2511.00001`–`2511.01708` | 1.708 |
+| **Tổng** | **5.000** |
+
+## 2. Kiến trúc và luồng dữ liệu
+
+```{mermaid}
+flowchart TD
+    A[Assigned arXiv IDs] --> B[Discovery: arXiv API]
+    B --> C[Paper metadata]
+    B --> D[Version task manifest]
+    D --> E[Source download per version]
+    E --> F[Extract .tex and .bib]
+    C --> G[Semantic Scholar reference crawl]
+    G --> H[Raw references and metadata]
+    F --> I[Local corpus]
+    C --> J[Build papers table]
+    H --> K[Filter references with arXiv ID]
+    K --> L[Build references table]
+    J --> M[Validation and reconciliation]
+    L --> M
+```
+
+Dữ liệu crawl, cache, corpus và Parquet được lưu ngoài code repository. Repository chứa mã nguồn, cấu hình và báo cáo; các artifact tổng hợp được chia sẻ theo quy định của nhóm.
+
+## 3. Kết quả tổng quan Member 5
+
+| Chỉ số | Kết quả |
+|---|---:|
+| Paper IDs được giao | 5.000 |
+| Discovery thành công | 5.000 |
+| Version tasks | 7.806 |
+| Source version có terminal status | 7.806 / 7.806 |
+| Semantic Scholar `ok` | 4.994 |
+| Semantic Scholar `not_found` | 6 |
+| Semantic Scholar `failed` | 0 |
+| References crawl thô | 198.107 |
+| References đủ điều kiện vào bảng | 92.563 |
+| Bảng `papers` | 5.000 dòng |
+| Bảng `references` | 92.563 dòng |
+| Validation | Pass, 0 errors, 0 warnings |
+
+## 4. Tổ chức các phần
+
+- **Methodology:** các stage, API và cách tổ chức pipeline.
+- **Data quality:** discovery/source/Semantic Scholar statuses và validation.
+- **Corpus analysis:** dung lượng source, reference coverage và các bảng thống kê.
+- **Performance:** số liệu đã đo và những phép đo còn thiếu.
+- **Limitations:** các lỗi, giới hạn API và giới hạn phạm vi báo cáo.
