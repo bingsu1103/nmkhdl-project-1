@@ -1,17 +1,13 @@
 format: jb-book
 root: index
-
 chapters:
   - file: milestone-1/index
     sections:
       - file: milestone-1/methodology
-      - file: milestone-1/discovery
-      - file: milestone-1/source-crawling
-      - file: milestone-1/reference-crawling
-      - file: milestone-1/data-validation
+      - file: milestone-1/data-quality
+      - file: milestone-1/corpus-analysis
       - file: milestone-1/performance
       - file: milestone-1/limitations
-
   - file: milestone-2/index
     sections:
       - file: milestone-2/hierarchical-parsing
