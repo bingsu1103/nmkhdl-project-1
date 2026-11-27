@@ -71,12 +71,12 @@ def build_parsing_inputs(
         source_status = str(status.get("status") or "pipeline_error")
         if source_status == "success":
             input_status = "ready"
-            source_dir = str(
+            source_dir = (
                 Path("corpus")
                 / "tex"
                 / task["arxiv_id"]
                 / task["versioned_arxiv_id"]
-            )
+            ).as_posix()
             absolute_source_dir = root / source_dir
             if not absolute_source_dir.is_dir():
                 raise ParsingContractError(

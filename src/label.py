@@ -149,6 +149,24 @@ def validate_labeling_quota(
 # 2. PHÂN CHIA TẬP DỮ LIỆU CẤP BÀI BÁO (PUBLICATION-DISJOINT SPLIT)
 # ==============================================================================
 
+def _append_partition_rows(
+    split_results: List[PublicationSplitInfo],
+    items: Sequence[Dict[str, Any]],
+    part: str,
+    method: str,
+) -> None:
+    for p in items:
+        split_results.append(
+            PublicationSplitInfo(
+                arxiv_id=normalize_arxiv_id(p["arxiv_id"]),
+                partition=part,
+                method=method,
+                labeled_by=p.get("labeled_by", "unknown"),
+                entries_count=p.get("entries_count", 0),
+            )
+        )
+
+
 def create_publication_split(
     manual_publications: Sequence[Dict[str, Any]],
     auto_publications: Sequence[Dict[str, Any]],
@@ -174,40 +192,63 @@ def create_publication_split(
     rng.shuffle(sorted_manual)
     rng.shuffle(sorted_auto)
 
-    # 1. Phân bổ cho Test Set
-    test_manual = sorted_manual[:k]
-    test_auto = sorted_auto[:k]
-
-    # 2. Phân bổ cho Validation Set
-    valid_manual = sorted_manual[k : 2 * k]
-    valid_auto = sorted_auto[k : 2 * k]
-
-    # 3. Phân bổ cho Training Set
-    train_manual = sorted_manual[2 * k :]
-    train_auto = sorted_auto[2 * k :]
-
     split_results: List[PublicationSplitInfo] = []
-
-    def _add_partition(items: List[Dict[str, Any]], part: str, method: str) -> None:
-        for p in items:
-            split_results.append(
-                PublicationSplitInfo(
-                    arxiv_id=normalize_arxiv_id(p["arxiv_id"]),
-                    partition=part,
-                    method=method,
-                    labeled_by=p.get("labeled_by", "unknown"),
-                    entries_count=p.get("entries_count", 0),
-                )
-            )
-
-    _add_partition(test_manual, "test", "manual")
-    _add_partition(test_auto, "test", "automatic")
-    _add_partition(valid_manual, "valid", "manual")
-    _add_partition(valid_auto, "valid", "automatic")
-    _add_partition(train_manual, "train", "manual")
-    _add_partition(train_auto, "train", "automatic")
+    _append_partition_rows(split_results, sorted_manual[:k], "test", "manual")
+    _append_partition_rows(split_results, sorted_auto[:k], "test", "automatic")
+    _append_partition_rows(split_results, sorted_manual[k : 2 * k], "valid", "manual")
+    _append_partition_rows(split_results, sorted_auto[k : 2 * k], "valid", "automatic")
+    _append_partition_rows(split_results, sorted_manual[2 * k :], "train", "manual")
+    _append_partition_rows(split_results, sorted_auto[2 * k :], "train", "automatic")
 
     # Kiểm tra rò rỉ (Assert publication-disjoint)
+    all_aids = [s.arxiv_id for s in split_results]
+    assert len(all_aids) == len(set(all_aids)), "LỖI RÒ RỈ: Có bài báo xuất hiện ở nhiều partition khác nhau!"
+
+    return sorted(split_results, key=lambda x: (x.partition, x.arxiv_id))
+
+
+def create_stratified_publication_split(
+    manual_by_member: Dict[str, Sequence[Dict[str, Any]]],
+    auto_by_member: Dict[str, Sequence[Dict[str, Any]]],
+    random_seed: int = 42,
+) -> List[PublicationSplitInfo]:
+    """
+    Phân chia dữ liệu cấp bài báo ĐỀU THEO TỪNG THÀNH VIÊN (Stratified Publication-disjoint Split):
+    - Mỗi thành viên đóng góp đúng 1 bài manual + 1 bài auto vào Test,
+      1 bài manual + 1 bài auto vào Validation, và toàn bộ phần còn lại vào Train.
+    - Gộp k thành viên vẫn khớp đúng yêu cầu đề bài: Test = k manual + k auto, Valid = k manual + k auto.
+    - Bảo đảm khi tách bảng predictions trả về từng repo Hugging Face cá nhân,
+      mỗi thành viên đều có đủ 3 tập train/valid/test và đúng quota cá nhân.
+    """
+    member_keys = sorted(set(manual_by_member) | set(auto_by_member))
+    if not member_keys:
+        raise ValueError("Danh sách thành viên để chia stratified split không được rỗng.")
+
+    rng = random.Random(random_seed)
+    split_results: List[PublicationSplitInfo] = []
+
+    for member_key in member_keys:
+        m_list = sorted(list(manual_by_member.get(member_key, [])), key=lambda x: str(x["arxiv_id"]))
+        a_list = sorted(list(auto_by_member.get(member_key, [])), key=lambda x: str(x["arxiv_id"]))
+        if len(m_list) < 2:
+            raise ValueError(
+                f"Thành viên '{member_key}' chỉ có {len(m_list)} bài manual; cần tối thiểu 2 bài để chia 1 Test + 1 Valid."
+            )
+        if len(a_list) < 2:
+            raise ValueError(
+                f"Thành viên '{member_key}' chỉ có {len(a_list)} bài automatic; cần tối thiểu 2 bài để chia 1 Test + 1 Valid."
+            )
+
+        rng.shuffle(m_list)
+        rng.shuffle(a_list)
+
+        _append_partition_rows(split_results, m_list[:1], "test", "manual")
+        _append_partition_rows(split_results, a_list[:1], "test", "automatic")
+        _append_partition_rows(split_results, m_list[1:2], "valid", "manual")
+        _append_partition_rows(split_results, a_list[1:2], "valid", "automatic")
+        _append_partition_rows(split_results, m_list[2:], "train", "manual")
+        _append_partition_rows(split_results, a_list[2:], "train", "automatic")
+
     all_aids = [s.arxiv_id for s in split_results]
     assert len(all_aids) == len(set(all_aids)), "LỖI RÒ RỈ: Có bài báo xuất hiện ở nhiều partition khác nhau!"
 

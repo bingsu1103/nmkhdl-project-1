@@ -29,7 +29,7 @@ from src.storage import (
 )
 from src.validate import validate_predictions_table
 
-from src.features import extract_pair_features
+from src.features import FEATURE_NAMES, extract_pair_features
 from src.model import (
     HeuristicRanker,
     LearnedRanker,
@@ -501,7 +501,7 @@ def test_train_and_predict_end_to_end():
         )
         assert ok and summary["predictions_output"]["is_valid"], summary
         assert summary["predictions_output"]["total_rows"] == 200
-        assert len(summary["model_comparison"]) == 5
+        assert len(summary["model_comparison"]) == 6
 
 
 def test_model_edge_cases():
@@ -514,7 +514,7 @@ def test_model_edge_cases():
     assert empty_w.score_pair({"title": "A"}, {"ref_title": "A"}) == 0.0
 
     # 2. LearnedRanker.fit với numpy.ndarray & 1 lớp duy nhất (classes_=[0])
-    X_np = np.zeros((4, 11), dtype=float)
+    X_np = np.zeros((4, len(FEATURE_NAMES)), dtype=float)
     y_zero = np.zeros(4, dtype=int)
     rf = LearnedRanker(model_type="random_forest", n_estimators=5, random_state=42)
     rf.fit(X_np, y_zero)
@@ -684,3 +684,229 @@ def test_train_and_predict_multi_data_dir_and_quota():
         assert summary["total_assigned_papers"] == 20
         assert summary["predictions_output"]["total_rows"] == 400
         assert summary["best_model"] != "heuristic_ranker"
+
+
+def test_unlabeled_entries_excluded_from_train_and_eval():
+    """Kiểm tra P0: Entry chưa gán nhãn trong bài manual bị loại khỏi train & |Q| MRR@5, nhưng vẫn có mặt trong predictions."""
+    import json
+    from scripts.train_and_predict import run_training_and_prediction
+    from src.storage import PAPERS_SCHEMA, write_sharded_parquet
+
+    # 10 bài x 30 entries = 300 entries; 5 bài manual chỉ gán nhãn 20/30 entries (10 entries unlabeled mỗi bài)
+    data = generate_mock_matching_dataset(num_pubs=10, refs_per_pub=6, entries_per_pub=30, seed=99)
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp)
+        tables_dir = data_dir / "tables"
+        papers = [
+            {
+                "arxiv_id": aid,
+                "title": f"Paper {aid}",
+                "authors": ["Author"],
+                "submission_date": "2024-09-01T00:00:00Z",
+                "revised_dates": [],
+                "venue": None,
+            }
+            for aid in sorted({r["arxiv_id"] for r in data["bibtex"]})
+        ]
+        write_sharded_parquet(create_table_from_records(papers, PAPERS_SCHEMA), tables_dir, "papers")
+        write_sharded_parquet(create_table_from_records(data["bibtex"], BIBTEX_SCHEMA), tables_dir, "bibtex")
+        write_sharded_parquet(create_table_from_records(data["references"], REFERENCES_SCHEMA), tables_dir, "references")
+
+        by_pub: dict[str, list[dict]] = {}
+        for r in data["bibtex"]:
+            by_pub.setdefault(r["arxiv_id"], []).append(r)
+        pub_ids = sorted(by_pub)
+
+        def _write_manifest(path: Path, aids: list[str], method: str, label_limit: int | None) -> None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            pubs, labels = [], []
+            for aid in aids:
+                entries = by_pub[aid]
+                subset = entries[:label_limit] if label_limit is not None else entries
+                pubs.append({
+                    "arxiv_id": aid,
+                    "method": method,
+                    "labeled_by": "member-1",
+                    "entries_count": len(subset),
+                    "labeled_count": len(subset),
+                    "matched_count": sum(1 for e in subset if e["groundtruth_arxiv_id"]),
+                })
+                for e in subset:
+                    labels.append({
+                        "arxiv_id": aid,
+                        "citation_key": e["citation_key"],
+                        "groundtruth_arxiv_id": e["groundtruth_arxiv_id"],
+                        "method": method,
+                    })
+            path.write_text(json.dumps({"selected_papers": aids, "publications": pubs, "labels": labels}), encoding="utf-8")
+
+        m_path = data_dir / "matching" / "manual_labels.json"
+        a_path = data_dir / "matching" / "auto_labels.json"
+        _write_manifest(m_path, pub_ids[:5], "manual", label_limit=20)
+        _write_manifest(a_path, pub_ids[5:], "automatic", label_limit=None)
+
+        ok, summary = run_training_and_prediction(
+            data_dir=data_dir,
+            manual_paths=[m_path],
+            auto_paths=[a_path],
+            num_members=1,
+            seed=42,
+            negative_ratio=5,
+            max_train_entries_per_pub=0,
+            eval_only=False,
+            output_tables_dir=tables_dir,
+            report_output=data_dir / "matching" / "report.json",
+            split_output=data_dir / "matching" / "split.json",
+        )
+        assert ok and summary["predictions_output"]["is_valid"], summary
+        # 3 bài manual trong train x 10 entries chưa gán nhãn = 30 entries bị loại khỏi train
+        assert summary["train_dataset"]["unlabeled_train_entries_skipped"] == 30
+        # Valid và Test mỗi tập có 1 manual (20/30 labeled) + 1 auto (30/30 labeled) -> 50 labeled, 10 excluded
+        assert summary["eval_entries"]["valid_entries_total"] == 60
+        assert summary["eval_entries"]["valid_entries_labeled"] == 50
+        assert summary["eval_entries"]["test_entries_total"] == 60
+        assert summary["eval_entries"]["test_entries_labeled"] == 50
+        for m in summary["model_comparison"]:
+            assert m["valid"]["unlabeled_entries_excluded"] == 10
+            assert m["valid"]["all_entries"]["total_queries"] == 50
+            assert m["test"]["unlabeled_entries_excluded"] == 10
+            assert m["test"]["all_entries"]["total_queries"] == 50
+        # Bảng predictions cuối cùng vẫn xuất đầy đủ 300 entries của cả 10 bài
+        assert summary["predictions_output"]["total_rows"] == 300
+
+
+def test_p2_mixed_jsonl_stratified_split_and_per_member_export():
+    """Kiểm tra P2: đọc JSONL (Member 1) + JSON (Member 2), auto-generate thiếu, stratified split và tách predictions cá nhân."""
+    import json
+    from scripts.train_and_predict import (
+        _discover_manual_label_path,
+        _load_label_manifests,
+        run_training_and_prediction,
+    )
+    from src.storage import PAPERS_SCHEMA, read_sharded_parquet, write_sharded_parquet
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        dirs: list[Path] = []
+
+        # Tạo 2 shard: member-1 dùng JSONL ở labels/ (chỉ gán 20/25 entry mỗi bài manual) và KHÔNG có auto_labels.json;
+        # member-2 dùng JSON chuẩn ở matching/ (đủ cả manual_labels.json và auto_labels.json).
+        for m_idx in (1, 2):
+            d = root / f"member-{m_idx}"
+            dirs.append(d)
+            data = generate_mock_matching_dataset(num_pubs=12, refs_per_pub=6, entries_per_pub=25, seed=70 + m_idx)
+            prefix = f"260{m_idx}"
+            for row in data["papers"]:
+                row["arxiv_id"] = prefix + row["arxiv_id"][4:]
+            for row in data["references"]:
+                row["arxiv_id"] = prefix + row["arxiv_id"][4:]
+            for row in data["bibtex"]:
+                row["arxiv_id"] = prefix + row["arxiv_id"][4:]
+
+            tables_dir = d / "tables"
+            write_sharded_parquet(create_table_from_records(data["papers"], PAPERS_SCHEMA), tables_dir, "papers")
+            write_sharded_parquet(create_table_from_records(data["bibtex"], BIBTEX_SCHEMA), tables_dir, "bibtex")
+            write_sharded_parquet(create_table_from_records(data["references"], REFERENCES_SCHEMA), tables_dir, "references")
+
+            by_pub: dict[str, list[dict]] = {}
+            for r in data["bibtex"]:
+                by_pub.setdefault(r["arxiv_id"], []).append(r)
+            pub_ids = sorted(by_pub)
+
+            if m_idx == 1:
+                labels_dir = d / "labels"
+                labels_dir.mkdir(parents=True, exist_ok=True)
+                jsonl_lines = []
+                for aid in pub_ids[:5]:
+                    for e in by_pub[aid][:20]:  # 20/25 entries labeled (5 unlabeled per manual paper)
+                        jsonl_lines.append(
+                            json.dumps({
+                                "arxiv_id": aid,
+                                "citation_key": e["citation_key"],
+                                "groundtruth_arxiv_id": e["groundtruth_arxiv_id"],
+                                "review_status": "reviewed",
+                                "reviewed_by": "member-1",
+                            })
+                        )
+                (labels_dir / "member-1-assisted.jsonl").write_text("\n".join(jsonl_lines) + "\n", encoding="utf-8")
+            else:
+                def _write_json(path: Path, aids: list[str], method: str) -> None:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    pubs, labels = [], []
+                    for aid in aids:
+                        entries = by_pub[aid]
+                        pubs.append({
+                            "arxiv_id": aid,
+                            "method": method,
+                            "labeled_by": "member-2",
+                            "entries_count": len(entries),
+                            "labeled_count": len(entries),
+                            "matched_count": sum(1 for e in entries if e["groundtruth_arxiv_id"]),
+                        })
+                        for e in entries:
+                            labels.append({
+                                "arxiv_id": aid,
+                                "citation_key": e["citation_key"],
+                                "groundtruth_arxiv_id": e["groundtruth_arxiv_id"],
+                                "method": method,
+                            })
+                    path.write_text(json.dumps({"selected_papers": aids, "publications": pubs, "labels": labels}), encoding="utf-8")
+
+                _write_json(d / "matching" / "manual_labels.json", pub_ids[:5], "manual")
+                _write_json(d / "matching" / "auto_labels.json", pub_ids[5:], "automatic")
+
+        # 1. Auto-discovery tìm đúng JSONL của member-1 và JSON của member-2
+        m1_discovered = _discover_manual_label_path(dirs[0])
+        m2_discovered = _discover_manual_label_path(dirs[1])
+        assert m1_discovered.name == "member-1-assisted.jsonl"
+        assert m2_discovered.name == "manual_labels.json"
+
+        # 2. Chặn file JSONL còn dòng review_status='pending'
+        pending_file = root / "pending.jsonl"
+        pending_file.write_text(
+            json.dumps({"arxiv_id": "2601.00001", "citation_key": "k1", "groundtruth_arxiv_id": None, "review_status": "pending"}) + "\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="Unreviewed pending label"):
+            _load_label_manifests([pending_file], "manual")
+
+        # 3. Chạy full multi-member pipeline với stratified split, generate_missing_auto, lưu model & xuất riêng từng member
+        per_member_dir = root / "per_member_hf"
+        model_path = root / "group_out" / "matching_model.pkl"
+        ok, summary = run_training_and_prediction(
+            data_dirs=dirs,
+            manual_paths=[m1_discovered, m2_discovered],
+            auto_paths=[dirs[1] / "matching" / "auto_labels.json"],
+            num_members=2,
+            seed=42,
+            negative_ratio=5,
+            max_train_entries_per_pub=0,
+            eval_only=False,
+            output_tables_dir=root / "group_out" / "tables",
+            report_output=root / "group_out" / "report.json",
+            split_output=root / "group_out" / "split.json",
+            generate_missing_auto=True,
+            model_output=model_path,
+            export_per_member_dir=per_member_dir,
+        )
+        assert ok is True, summary
+        assert summary["split_strategy_used"] == "stratified_per_member"
+        assert summary["generated_auto_shards"] == ["member-1"]
+        assert summary["split_summary"]["valid"] == {"total_pubs": 4, "manual_pubs": 2, "auto_pubs": 2}
+        assert summary["split_summary"]["test"] == {"total_pubs": 4, "manual_pubs": 2, "auto_pubs": 2}
+        assert model_path.is_file() and len(summary["model_artifact"]["sha256"]) == 64
+        assert "labeled_only_summary" in summary["predictions_output"]
+
+        # 4. Mỗi member có bảng predictions riêng hợp lệ, đúng prefix dải ID, và đủ cả valid (2 bài) + test (2 bài)
+        exports = summary["per_member_exports"]
+        assert set(exports) == {"member-1", "member-2"}
+        for name, expected_prefix in (("member-1", "2601."), ("member-2", "2602.")):
+            info = exports[name]
+            assert info["is_valid"] is True, info["errors"]
+            assert info["quota_is_valid"] is True
+            assert info["partition_pub_counts"]["valid"] == 2
+            assert info["partition_pub_counts"]["test"] == 2
+            assert info["partition_pub_counts"]["train"] >= 3
+            shard_tbl = read_sharded_parquet(Path(info["predictions_dir"]), PREDICTIONS_SCHEMA)
+            assert shard_tbl.num_rows == info["total_rows"] and shard_tbl.num_rows > 0
+            assert all(str(aid).startswith(expected_prefix) for aid in shard_tbl["arxiv_id"].to_pylist())

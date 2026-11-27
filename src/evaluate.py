@@ -116,15 +116,17 @@ def compute_mrr_at_k(
 
 
 def evaluate_predictions_summary(
-    table: pa.Table,
+    table: Union[List[Dict[str, Any]], pa.Table],
     k: int = 5,
 ) -> Dict[str, Any]:
     """
     Tổng hợp kết quả đánh giá MRR@k cho cả 3 phân vùng: Test, Validation và Train.
+    Chuyển đổi PyArrow Table sang Python rows đúng 1 lần duy nhất để tiết kiệm RAM/CPU.
     """
-    test_metrics = compute_mrr_at_k(table, k=k, partition_filter="test")
-    valid_metrics = compute_mrr_at_k(table, k=k, partition_filter="valid")
-    train_metrics = compute_mrr_at_k(table, k=k, partition_filter="train")
+    rows = table.to_pylist() if isinstance(table, pa.Table) else table
+    test_metrics = compute_mrr_at_k(rows, k=k, partition_filter="test")
+    valid_metrics = compute_mrr_at_k(rows, k=k, partition_filter="valid")
+    train_metrics = compute_mrr_at_k(rows, k=k, partition_filter="train")
 
     return {
         "metric_name": f"MRR@{k}",
