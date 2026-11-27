@@ -4,15 +4,16 @@ Thuộc sở hữu của Member 4 - Data Quality, Matching Model và Evaluation.
 
 Nhiệm vụ:
 - Trích xuất các đặc trưng tương đồng văn bản, tác giả, thời gian, định danh giữa BibTeX entry và Candidate reference.
-- Phục vụ cho cả Heuristic Weighted Ranker và Machine Learning Models (Logistic Regression / LightGBM).
+- Phục vụ cho Heuristic Weighted Ranker và các mô hình học máy (Logistic Regression, Pairwise Logistic, Random Forest, HistGradientBoosting).
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+from rapidfuzz import fuzz
 from rapidfuzz.distance import Levenshtein
 
 from src.normalize import normalize_arxiv_id, normalize_text
@@ -28,18 +29,25 @@ STOPWORDS: Set[str] = {
 
 IGNORED_AUTHOR_TOKENS: Set[str] = {"others", "etal", "al"}
 
+ARXIV_ID_INLINE_RE = re.compile(r"\b(\d{4}\.\d{4,5}(?:v\d+)?|[a-z\-]+(?:\.[a-z]{2})?/\d{7}(?:v\d+)?)\b", re.IGNORECASE)
+
+# 13 đặc trưng đang hoạt động thực tế trên bảng Parquet chuẩn (BIBTEX_SCHEMA + REFERENCES_SCHEMA).
+# Lưu ý: doi_match và venue_token_overlap vẫn được tính trong extract_pair_features() cho dữ liệu dict thô,
+# nhưng không đưa vào FEATURE_NAMES vì REFERENCES_SCHEMA không có cột doi/venue (tránh 2 cột toàn 0.0).
 FEATURE_NAMES: List[str] = [
     "title_token_jaccard",
     "title_token_overlap",
     "title_edit_ratio",
+    "title_token_set_ratio",
     "first_author_match",
     "author_set_overlap",
+    "author_bib_recall",
     "year_diff",
     "year_exact_match",
     "year_proximity",
-    "doi_match",
+    "year_missing",
     "arxiv_id_match",
-    "venue_token_overlap",
+    "citation_key_hint_match",
 ]
 
 
@@ -146,34 +154,52 @@ def normalize_doi(raw_doi: Optional[str]) -> str:
 # 2. TRÍCH XUẤT ĐẶC TRƯNG CHO MỘT CẶP (BIBTEX, CANDIDATE)
 # ==============================================================================
 
+def _extract_arxiv_id_from_text(text: str) -> str:
+    if not text or "arxiv" not in text.lower():
+        return ""
+    m = ARXIV_ID_INLINE_RE.search(text)
+    return normalize_arxiv_id(m.group(1)) if m else ""
+
+
 def _prepare_bib_entry(bib_entry: Dict[str, Any]) -> Dict[str, Any]:
     bib_title = normalize_text(bib_entry.get("title") or "")
     bib_tokens = clean_tokens(bib_title)
     clean_bt = re.sub(r"[^\w\s]", "", bib_title.lower()).strip()
+    clean_bt_spaced = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", bib_title.lower())).strip()
     bib_first, bib_authors = extract_author_tokens(bib_entry.get("authors"))
     bib_y = extract_year(bib_entry.get("year"))
     bib_doi = normalize_doi(bib_entry.get("doi"))
 
     bib_eprint = normalize_arxiv_id(bib_entry.get("eprint"))
+    if not bib_eprint and bib_doi:
+        bib_eprint = _extract_arxiv_id_from_text(bib_doi)
     if not bib_eprint and "arxiv" in str(bib_entry.get("url") or "").lower():
         bib_eprint = normalize_arxiv_id(bib_entry.get("url"))
     if not bib_eprint:
         extra_text = " ".join(str(bib_entry.get(k) or "") for k in ("journal", "booktitle", "note"))
-        if "arxiv" in extra_text.lower():
-            m = re.search(r"\b(\d{4}\.\d{4,5}|[a-z\-]+(?:\.[a-z]{2})?/\d{7})\b", extra_text, re.I)
-            if m:
-                bib_eprint = normalize_arxiv_id(m.group(1))
+        bib_eprint = _extract_arxiv_id_from_text(extra_text)
+    raw_ckey = str(bib_entry.get("citation_key") or "").strip()
+    if not bib_eprint and raw_ckey:
+        # Chỉ nhận citation_key khi khớp đúng định dạng arXiv ID (vd: '2301.12345' hoặc 'arXiv:2301.12345')
+        if "arxiv" in raw_ckey.lower():
+            bib_eprint = _extract_arxiv_id_from_text(raw_ckey)
+        elif re.fullmatch(r"\d{4}\.\d{4,5}(?:v\d+)?", raw_ckey, re.IGNORECASE):
+            bib_eprint = normalize_arxiv_id(raw_ckey)
+
+    ckey_lower = re.sub(r"[^\w]", "", raw_ckey.lower())
 
     bib_venue = str(bib_entry.get("journal") or bib_entry.get("booktitle") or bib_entry.get("venue") or "")
     v_bib_tokens = clean_tokens(bib_venue)
     return {
         "tokens": bib_tokens,
         "clean_title": clean_bt,
+        "clean_title_spaced": clean_bt_spaced,
         "first_author": bib_first,
         "authors": bib_authors,
         "year": bib_y,
         "doi": bib_doi,
         "eprint": bib_eprint,
+        "ckey_lower": ckey_lower,
         "venue_tokens": v_bib_tokens,
     }
 
@@ -182,6 +208,7 @@ def _prepare_candidate_ref(candidate_ref: Dict[str, Any]) -> Dict[str, Any]:
     ref_title = normalize_text(candidate_ref.get("ref_title") or candidate_ref.get("title") or "")
     ref_tokens = clean_tokens(ref_title)
     clean_rt = re.sub(r"[^\w\s]", "", ref_title.lower()).strip()
+    clean_rt_spaced = re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", ref_title.lower())).strip()
     ref_first, ref_authors = extract_author_tokens(candidate_ref.get("ref_authors") or candidate_ref.get("authors"))
     ref_y = extract_year(
         candidate_ref.get("ref_year")
@@ -200,6 +227,7 @@ def _prepare_candidate_ref(candidate_ref: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "tokens": ref_tokens,
         "clean_title": clean_rt,
+        "clean_title_spaced": clean_rt_spaced,
         "first_author": ref_first,
         "authors": ref_authors,
         "year": ref_y,
@@ -232,6 +260,16 @@ def _score_prepared_pair(prep_bib: Dict[str, Any], prep_cand: Dict[str, Any]) ->
     else:
         title_edit_ratio = 0.0
 
+    bt_sp = prep_bib["clean_title_spaced"]
+    rt_sp = prep_cand["clean_title_spaced"]
+    if bt_sp and rt_sp:
+        if bt_sp == rt_sp:
+            title_token_set_ratio = 1.0
+        else:
+            title_token_set_ratio = fuzz.token_set_ratio(bt_sp, rt_sp) / 100.0
+    else:
+        title_token_set_ratio = 0.0
+
     bib_first = prep_bib["first_author"]
     ref_first = prep_cand["first_author"]
     first_author_match = 1.0 if (bib_first and ref_first and bib_first == ref_first) else 0.0
@@ -242,20 +280,24 @@ def _score_prepared_pair(prep_bib: Dict[str, Any], prep_cand: Dict[str, Any]) ->
         a_inter_len = len(bib_authors.intersection(ref_authors))
         a_union_len = len(bib_authors) + len(ref_authors) - a_inter_len
         author_set_overlap = a_inter_len / a_union_len if a_union_len else 0.0
+        author_bib_recall = a_inter_len / len(bib_authors)
     else:
         author_set_overlap = 0.0
+        author_bib_recall = 0.0
 
     bib_y = prep_bib["year"]
     ref_y = prep_cand["year"]
     if bib_y is not None and ref_y is not None:
-        diff = float(abs(bib_y - ref_y))
-        year_diff = diff
-        year_exact_match = 1.0 if diff == 0.0 else 0.0
-        year_proximity = max(0.0, 1.0 - (diff / 5.0))
+        raw_diff = float(abs(bib_y - ref_y))
+        year_diff = min(raw_diff, 20.0)
+        year_exact_match = 1.0 if raw_diff == 0.0 else 0.0
+        year_proximity = max(0.0, 1.0 - (raw_diff / 5.0))
+        year_missing = 0.0
     else:
         year_diff = 5.0
         year_exact_match = 0.0
         year_proximity = 0.0
+        year_missing = 1.0
 
     bib_doi = prep_bib["doi"]
     ref_doi = prep_cand["doi"]
@@ -264,6 +306,14 @@ def _score_prepared_pair(prep_bib: Dict[str, Any], prep_cand: Dict[str, Any]) ->
     bib_eprint = prep_bib["eprint"]
     cand_aid = prep_cand["arxiv_id"]
     arxiv_id_match = 1.0 if (bib_eprint and cand_aid and bib_eprint == cand_aid) else 0.0
+
+    ckey_lower = prep_bib["ckey_lower"]
+    citation_key_hint_match = 0.0
+    if ckey_lower:
+        if ref_first and len(ref_first) >= 3 and ref_first in ckey_lower:
+            citation_key_hint_match += 0.6
+        if ref_y is not None and str(ref_y) in ckey_lower:
+            citation_key_hint_match += 0.4
 
     v_bib_tokens = prep_bib["venue_tokens"]
     v_ref_tokens = prep_cand["venue_tokens"]
@@ -277,13 +327,17 @@ def _score_prepared_pair(prep_bib: Dict[str, Any], prep_cand: Dict[str, Any]) ->
         "title_token_jaccard": round(title_token_jaccard, 4),
         "title_token_overlap": round(title_token_overlap, 4),
         "title_edit_ratio": round(title_edit_ratio, 4),
+        "title_token_set_ratio": round(title_token_set_ratio, 4),
         "first_author_match": float(first_author_match),
         "author_set_overlap": round(author_set_overlap, 4),
+        "author_bib_recall": round(author_bib_recall, 4),
         "year_diff": float(year_diff),
         "year_exact_match": float(year_exact_match),
         "year_proximity": round(year_proximity, 4),
+        "year_missing": float(year_missing),
         "doi_match": float(doi_match),
         "arxiv_id_match": float(arxiv_id_match),
+        "citation_key_hint_match": round(citation_key_hint_match, 4),
         "venue_token_overlap": round(venue_token_overlap, 4),
     }
 
@@ -298,7 +352,7 @@ def extract_pair_features(
     candidate_ref: Dict[str, Any],
 ) -> Dict[str, float]:
     """
-    Trích xuất toàn bộ 11 đặc trưng số học cho một cặp (BibTeX entry, Candidate reference).
+    Trích xuất toàn bộ đặc trưng số học cho một cặp (BibTeX entry, Candidate reference).
     Tất cả các giá trị trả về đều là kiểu số thực (float), an toàn trước null/None.
     """
     return _score_prepared_pair(_prepare_bib_entry(bib_entry), _prepare_candidate_ref(candidate_ref))

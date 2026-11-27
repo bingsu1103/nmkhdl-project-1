@@ -4,8 +4,9 @@ Thuộc sở hữu của Member 4 - Data Quality, Matching Model và Evaluation.
 
 Bao gồm:
 1. HeuristicRanker: Baseline Rule-based ranker kết hợp trọng số diễn giải được.
-2. LearnedRanker: Mô hình học máy phân lớp / xếp hạng (Pointwise Classifier via Scikit-Learn: Logistic Regression / Random Forest).
-3. build_pairwise_dataset: Trích xuất tập dữ liệu huấn luyện (X, y, metadata) từ ground truth.
+2. LearnedRanker: Mô hình học máy xếp hạng ứng viên via Scikit-Learn
+   (Logistic Regression, Pairwise Logistic, Random Forest, HistGradientBoosting).
+3. build_pairwise_dataset & build_preference_dataset: Trích xuất tập dữ liệu huấn luyện (có hard-negative mining).
 4. predict_top_k_candidates: Sinh dự đoán Top-5 candidates đúng cấu trúc PREDICTIONS_SCHEMA.
 5. generate_mock_matching_dataset: Sinh dữ liệu giả lập chuẩn schema để thử nghiệm pipeline và tuning.
 """
@@ -32,14 +33,17 @@ from src.normalize import normalize_arxiv_id
 # ==============================================================================
 
 DEFAULT_HEURISTIC_WEIGHTS: Dict[str, float] = {
-    "title_token_jaccard": 3.0,
-    "title_token_overlap": 2.0,
-    "title_edit_ratio": 2.5,
+    "title_token_jaccard": 2.5,
+    "title_token_overlap": 1.5,
+    "title_edit_ratio": 2.0,
+    "title_token_set_ratio": 2.0,
     "first_author_match": 1.5,
-    "author_set_overlap": 1.5,
+    "author_set_overlap": 1.0,
+    "author_bib_recall": 1.2,
     "year_proximity": 1.0,
     "doi_match": 10.0,
     "arxiv_id_match": 10.0,
+    "citation_key_hint_match": 1.2,
     "venue_token_overlap": 0.5,
 }
 
@@ -82,13 +86,14 @@ class HeuristicRanker:
         Xếp hạng danh sách ứng viên theo điểm số giảm dần.
         Sử dụng tie-breaking tất định theo ref_arxiv_id khi điểm bằng nhau.
         """
+        prep_bib = _prepare_bib_entry(bib_entry)
         scored: List[Tuple[str, float]] = []
         for c in candidates:
             ext_ids = c.get("externalIds") if isinstance(c.get("externalIds"), dict) else {}
             c_aid = normalize_arxiv_id(c.get("ref_arxiv_id") or ext_ids.get("ArXiv"))
             if not c_aid:
                 continue
-            s = self.score_pair(bib_entry, c)
+            s = self.score_prepared_pair(prep_bib, _prepare_candidate_ref(c))
             scored.append((c_aid, s))
 
         # Sắp xếp giảm dần theo điểm, nếu bằng nhau thì tăng dần theo mã arXiv (deterministic tie-break)
@@ -102,9 +107,13 @@ class HeuristicRanker:
 
 class LearnedRanker:
     """
-    Mô hình học máy phân lớp / xếp hạng ứng viên (Pointwise Ranking via Binary Classification).
-    Dự đoán xác suất P(match=1) cho mỗi cặp (BibTeX, Candidate) rồi xếp hạng.
-    Hỗ trợ Logistic Regression hoặc Random Forest từ scikit-learn.
+    Mô hình học máy phân lớp / xếp hạng ứng viên (Pointwise & Pairwise Ranking via Scikit-Learn).
+    Hỗ trợ:
+    - 'logistic': StandardScaler + LogisticRegression (pointwise P(match=1)).
+    - 'pairwise_logistic': StandardScaler(with_mean=False) + LogisticRegression(fit_intercept=False)
+      huấn luyện trên vector hiệu (x_pos - x_neg) để tối ưu trực tiếp thứ tự xếp hạng trong từng bài báo.
+    - 'random_forest': RandomForestClassifier.
+    - 'hist_gb': HistGradientBoostingClassifier.
     """
 
     def __init__(
@@ -120,14 +129,25 @@ class LearnedRanker:
         self.is_fitted = False
 
         # Khởi tạo estimator tương ứng
-        if self.model_type == "logistic":
+        if self.model_type in {"logistic", "pairwise_logistic"}:
             from sklearn.linear_model import LogisticRegression
-            self.model = LogisticRegression(
-                class_weight=class_weight,
-                random_state=random_state,
-                max_iter=kwargs.get("max_iter", 1000),
-                C=kwargs.get("C", 1.0),
-            )
+            from sklearn.pipeline import Pipeline
+            from sklearn.preprocessing import StandardScaler
+
+            is_pairwise = self.model_type == "pairwise_logistic"
+            self.model = Pipeline([
+                ("scaler", StandardScaler(with_mean=not is_pairwise)),
+                (
+                    "clf",
+                    LogisticRegression(
+                        fit_intercept=not is_pairwise,
+                        class_weight=None if is_pairwise else class_weight,
+                        random_state=random_state,
+                        max_iter=kwargs.get("max_iter", 1000),
+                        C=kwargs.get("C", 1.0),
+                    ),
+                ),
+            ])
         elif self.model_type == "random_forest":
             from sklearn.ensemble import RandomForestClassifier
             self.model = RandomForestClassifier(
@@ -148,16 +168,37 @@ class LearnedRanker:
             )
         else:
             raise ValueError(
-                f"model_type không hợp lệ: {model_type}. Chọn 'logistic', 'random_forest' hoặc 'hist_gb'."
+                f"model_type không hợp lệ: {model_type}. "
+                "Chọn 'logistic', 'pairwise_logistic', 'random_forest' hoặc 'hist_gb'."
             )
 
-    def fit(self, X: Any, y: Any) -> LearnedRanker:
-        """Huấn luyện mô hình trên tập dữ liệu đặc trưng (X, y)."""
+    def get_final_estimator(self) -> Any:
+        """Trả về estimator cuối cùng (tự động bóc Pipeline nếu có StandardScaler)."""
+        from sklearn.pipeline import Pipeline
+
+        if isinstance(self.model, Pipeline) and "clf" in self.model.named_steps:
+            return self.model.named_steps["clf"]
+        return self.model
+
+    def fit(self, X: Any, y: Any, sample_weight: Optional[Any] = None) -> LearnedRanker:
+        """Huấn luyện mô hình trên tập dữ liệu đặc trưng (X, y), hỗ trợ sample_weight."""
         if len(X) == 0 or len(y) == 0:
             raise ValueError("Tập dữ liệu huấn luyện (X, y) không được rỗng!")
         if len(X) != len(y):
             raise ValueError(f"Độ dài X ({len(X)}) và y ({len(y)}) không khớp!")
-        self.model.fit(X, y)
+        if sample_weight is not None:
+            if len(sample_weight) != len(y):
+                raise ValueError(
+                    f"Độ dài sample_weight ({len(sample_weight)}) và y ({len(y)}) không khớp!"
+                )
+            from sklearn.pipeline import Pipeline
+
+            if isinstance(self.model, Pipeline) and "clf" in self.model.named_steps:
+                self.model.fit(X, y, clf__sample_weight=sample_weight)
+            else:
+                self.model.fit(X, y, sample_weight=sample_weight)
+        else:
+            self.model.fit(X, y)
         self.is_fitted = True
         return self
 
@@ -187,7 +228,10 @@ class LearnedRanker:
         """
         if not candidates:
             return []
+        if not self.is_fitted:
+            raise RuntimeError("Mô hình chưa được huấn luyện! Hãy gọi .fit() trước.")
 
+        prep_bib = _prepare_bib_entry(bib_entry)
         c_aids: List[str] = []
         feat_matrix: List[List[float]] = []
 
@@ -197,13 +241,10 @@ class LearnedRanker:
             if not c_aid:
                 continue
             c_aids.append(c_aid)
-            feat_matrix.append(extract_feature_vector(bib_entry, c))
+            feat_matrix.append(_score_prepared_vector(prep_bib, _prepare_candidate_ref(c)))
 
         if not feat_matrix:
             return []
-
-        if not self.is_fitted:
-            raise RuntimeError("Mô hình chưa được huấn luyện! Hãy gọi .fit() trước.")
 
         probs = self.model.predict_proba(feat_matrix)
         scores = self._positive_probs(probs)
@@ -248,18 +289,77 @@ def _unique_top_k(scored: List[Tuple[str, float]], k: int) -> List[str]:
     return unique_top
 
 
+def _cheap_hard_negative_score(prep_bib: Dict[str, Any], prep_cand: Dict[str, Any]) -> float:
+    """Chấm điểm sơ bộ cực nhanh O(|tokens|) để chọn hard negatives mà không cần gọi Levenshtein."""
+    bt = prep_bib["tokens"]
+    rt = prep_cand["tokens"]
+    if bt and rt:
+        inter = len(bt.intersection(rt))
+        union = len(bt) + len(rt) - inter
+        jacc = inter / union if union else 0.0
+    else:
+        jacc = 0.0
+    first_match = (
+        1.0
+        if (
+            prep_bib["first_author"]
+            and prep_cand["first_author"]
+            and prep_bib["first_author"] == prep_cand["first_author"]
+        )
+        else 0.0
+    )
+    ba = prep_bib["authors"]
+    ra = prep_cand["authors"]
+    a_recall = (len(ba.intersection(ra)) / len(ba)) if (ba and ra) else 0.0
+    by = prep_bib["year"]
+    ry = prep_cand["year"]
+    y_match = 1.0 if (by is not None and ry is not None and abs(by - ry) <= 1) else 0.0
+    return 3.0 * jacc + 1.5 * first_match + 1.0 * a_recall + 0.5 * y_match
+
+
+def _select_negatives(
+    prep_bib: Dict[str, Any],
+    neg_candidates: List[Tuple[str, Dict[str, Any]]],
+    max_negs: int,
+    hard_negative_fraction: float,
+    rng: random.Random,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    if len(neg_candidates) <= max_negs:
+        return neg_candidates
+    if hard_negative_fraction <= 0.0:
+        return rng.sample(neg_candidates, max_negs)
+    frac = min(1.0, hard_negative_fraction)
+    n_hard = min(len(neg_candidates), int(round(max_negs * frac)))
+    ranked = sorted(
+        neg_candidates,
+        key=lambda item: (-_cheap_hard_negative_score(prep_bib, item[1]), item[0]),
+    )
+    hard_picked = ranked[:n_hard]
+    remainder = ranked[n_hard:]
+    n_rand = max_negs - len(hard_picked)
+    if n_rand > 0 and remainder:
+        rand_picked = rng.sample(remainder, min(n_rand, len(remainder)))
+    else:
+        rand_picked = []
+    return hard_picked + rand_picked
+
+
 def build_pairwise_dataset(
     bib_entries: List[Dict[str, Any]],
     candidates: List[Dict[str, Any]],
     negative_sample_ratio: Optional[int] = None,
     seed: int = 42,
+    hard_negative_fraction: float = 0.0,
+    skip_unlabeled: bool = True,
 ) -> Tuple[List[List[float]], List[int], List[Dict[str, Any]]]:
     """
     Sinh tập dữ liệu đặc trưng (X, y, metadata) từ các nhãn ground truth:
+    - Bỏ qua các entry đánh dấu `is_labeled=False` (chưa gán nhãn, tránh bơm nhiễu false-negative).
     - Với mỗi entry trong cùng publication:
       - Cặp đúng (ground truth match): y = 1.
       - Các cặp còn lại: y = 0.
-    - negative_sample_ratio: Tùy chọn downsample mẫu âm (ví dụ 10 mẫu âm / 1 mẫu dương) để cân bằng dữ liệu.
+    - negative_sample_ratio: Downsample mẫu âm trước khi trích xuất vector đặc trưng.
+    - hard_negative_fraction: Tỷ lệ mẫu âm khó (0.0..1.0) chọn bằng pre-score token/author.
     """
     cand_by_pub = _prepare_candidates_by_pub(candidates)
 
@@ -269,9 +369,13 @@ def build_pairwise_dataset(
     meta: List[Dict[str, Any]] = []
 
     for entry in bib_entries:
+        if skip_unlabeled and entry.get("is_labeled") is False:
+            continue
+
         pub_id = normalize_arxiv_id(entry.get("arxiv_id"))
         ckey = str(entry.get("citation_key", ""))
         gt_id = normalize_arxiv_id(entry.get("groundtruth_arxiv_id"))
+        label_method = str(entry.get("label_method") or "unknown")
         cands = cand_by_pub.get(pub_id, [])
         if not cands:
             continue
@@ -286,12 +390,12 @@ def build_pairwise_dataset(
             else:
                 neg_candidates.append((c_aid, prep_c))
 
-        # Chọn mẫu âm trước khi trích xuất đặc trưng để full shard không tính
-        # hàng triệu vector chắc chắn sẽ bị loại khỏi tập huấn luyện.
+        # Chọn mẫu âm trước khi trích xuất đặc trưng đầy đủ (có thể kết hợp hard negatives)
         if negative_sample_ratio is not None and neg_candidates:
             max_negs = max(1, len(pos_candidates)) * negative_sample_ratio
-            if len(neg_candidates) > max_negs:
-                neg_candidates = rng.sample(neg_candidates, max_negs)
+            neg_candidates = _select_negatives(
+                prep_bib, neg_candidates, max_negs, hard_negative_fraction, rng
+            )
 
         for label, selected in ((1, pos_candidates), (0, neg_candidates)):
             for candidate_aid, prep_candidate in selected:
@@ -303,10 +407,93 @@ def build_pairwise_dataset(
                         "citation_key": ckey,
                         "ref_arxiv_id": candidate_aid,
                         "groundtruth_arxiv_id": gt_id,
+                        "label_method": label_method,
                     }
                 )
 
     return X, y, meta
+
+
+def build_preference_dataset(
+    bib_entries: List[Dict[str, Any]],
+    candidates: List[Dict[str, Any]],
+    negative_sample_ratio: Optional[int] = 10,
+    hard_negative_fraction: float = 0.5,
+    seed: int = 42,
+    manual_sample_weight: float = 5.0,
+    skip_unlabeled: bool = True,
+) -> Tuple[List[List[float]], List[int], List[float], List[Dict[str, Any]]]:
+    """
+    Sinh tập cặp đối xứng (x_pos - x_neg -> 1, x_neg - x_pos -> 0) phục vụ Pairwise Ranking
+    (LearnedRanker với model_type='pairwise_logistic').
+    Tối ưu trực tiếp thứ tự xếp hạng giữa ứng viên đúng và các ứng viên sai trong cùng bài báo.
+    """
+    cand_by_pub = _prepare_candidates_by_pub(candidates)
+    rng = random.Random(seed)
+    X_diff: List[List[float]] = []
+    y_diff: List[int] = []
+    weights: List[float] = []
+    meta: List[Dict[str, Any]] = []
+
+    for entry in bib_entries:
+        if skip_unlabeled and entry.get("is_labeled") is False:
+            continue
+
+        pub_id = normalize_arxiv_id(entry.get("arxiv_id"))
+        ckey = str(entry.get("citation_key", ""))
+        gt_id = normalize_arxiv_id(entry.get("groundtruth_arxiv_id"))
+        if not gt_id:
+            continue
+        cands = cand_by_pub.get(pub_id, [])
+        if not cands:
+            continue
+
+        pos_pair: Optional[Tuple[str, Dict[str, Any]]] = None
+        neg_candidates: List[Tuple[str, Dict[str, Any]]] = []
+        for c_aid, prep_c in cands:
+            if c_aid == gt_id:
+                pos_pair = (c_aid, prep_c)
+            else:
+                neg_candidates.append((c_aid, prep_c))
+
+        if pos_pair is None or not neg_candidates:
+            continue
+
+        prep_bib = _prepare_bib_entry(entry)
+        if negative_sample_ratio is not None:
+            neg_candidates = _select_negatives(
+                prep_bib, neg_candidates, max(1, negative_sample_ratio), hard_negative_fraction, rng
+            )
+
+        v_pos = _score_prepared_vector(prep_bib, pos_pair[1])
+        label_method = str(entry.get("label_method") or "unknown")
+        w = float(manual_sample_weight) if label_method == "manual" else 1.0
+
+        for neg_aid, prep_neg in neg_candidates:
+            v_neg = _score_prepared_vector(prep_bib, prep_neg)
+            X_diff.append([a - b for a, b in zip(v_pos, v_neg)])
+            y_diff.append(1)
+            weights.append(w)
+            meta.append({
+                "arxiv_id": pub_id,
+                "citation_key": ckey,
+                "pos_arxiv_id": pos_pair[0],
+                "neg_arxiv_id": neg_aid,
+                "label_method": label_method,
+            })
+
+            X_diff.append([b - a for a, b in zip(v_pos, v_neg)])
+            y_diff.append(0)
+            weights.append(w)
+            meta.append({
+                "arxiv_id": pub_id,
+                "citation_key": ckey,
+                "pos_arxiv_id": neg_aid,
+                "neg_arxiv_id": pos_pair[0],
+                "label_method": label_method,
+            })
+
+    return X_diff, y_diff, weights, meta
 
 
 # ==============================================================================

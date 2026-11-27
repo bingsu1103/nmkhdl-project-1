@@ -20,6 +20,7 @@ from src.model import (
     HeuristicRanker,
     LearnedRanker,
     build_pairwise_dataset,
+    build_preference_dataset,
     generate_mock_matching_dataset,
     predict_top_k_candidates,
 )
@@ -171,12 +172,12 @@ def test_heuristic_ranker():
 
 def test_learned_ranker_training_and_ranking():
     """Kiểm tra huấn luyện LearnedRanker và dự đoán xác suất."""
-    # Sinh dữ liệu huấn luyện nhỏ có 2 class 0 và 1
+    # Sinh dữ liệu huấn luyện nhỏ có 2 class 0 và 1 (đúng len(FEATURE_NAMES) = 13 cột)
     X = [
-        [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0],  # Match tốt -> 1
-        [0.9, 0.8, 0.9, 1.0, 0.8, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0],  # Match tốt -> 1
-        [0.0, 0.0, 0.1, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Không match -> 0
-        [0.1, 0.1, 0.2, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Không match -> 0
+        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0],  # Match tốt -> 1
+        [0.9, 0.8, 0.9, 0.95, 1.0, 0.8, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.6],  # Match tốt -> 1
+        [0.0, 0.0, 0.1, 0.1, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 0.0, 0.0],  # Không match -> 0
+        [0.1, 0.1, 0.2, 0.2, 0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 1.0, 0.0, 0.0],  # Không match -> 0
     ]
     y = [1, 1, 0, 0]
 
@@ -478,3 +479,108 @@ def test_create_table_float_int_coercion():
     assert table.num_rows == 2
     assert table.column("year")[0].as_py() == 2017
     assert table.column("year")[1].as_py() is None
+
+
+def test_p1_feature_signals_hard_negatives_and_pairwise_ranker(monkeypatch):
+    """Kiểm tra các đặc trưng mới P1, hard-negative mining, StandardScaler và Pairwise Logistic Ranker."""
+    # 1. arXiv ID ẩn trong DOI (10.48550/arXiv.*), author_bib_recall (et al.), citation_key_hint_match, year_missing
+    bib_doi_etal = {
+        "citation_key": "vaswani2017attention",
+        "title": "All You Need Is Attention: Extended Study",
+        "authors": ["Vaswani, Ashish and others"],
+        "year": None,
+        "doi": "https://doi.org/10.48550/arXiv.1706.03762",
+    }
+    ref_many_authors = {
+        "ref_arxiv_id": "1706.03762",
+        "ref_title": "Attention Is All You Need",
+        "ref_authors": [
+            "Ashish Vaswani", "Noam Shazeer", "Niki Parmar", "Jakob Uszkoreit",
+            "Llion Jones", "Aidan N. Gomez", "Lukasz Kaiser", "Illia Polosukhin",
+            "Author Nine", "Author Ten",
+        ],
+        "ref_submission_date": "2017-06-12",
+    }
+    feats = extract_pair_features(bib_doi_etal, ref_many_authors)
+    assert feats["arxiv_id_match"] == 1.0
+    assert feats["author_bib_recall"] == 1.0
+    assert feats["author_set_overlap"] == 0.1
+    assert feats["title_token_set_ratio"] == 1.0
+    assert feats["year_missing"] == 1.0
+    assert feats["citation_key_hint_match"] == 1.0
+
+    # Kiểm tra year_diff được cap ở 20.0 và không bị 2 feature chết trong FEATURE_NAMES
+    old_bib = {"title": "Classic", "authors": ["Smith"], "year": 1970}
+    new_ref = {"ref_arxiv_id": "2401.00001", "ref_title": "Classic", "ref_authors": ["Smith"], "ref_year": 2024}
+    old_feats = extract_pair_features(old_bib, new_ref)
+    assert old_feats["year_diff"] == 20.0
+    assert old_feats["year_missing"] == 0.0
+    assert "doi_match" not in FEATURE_NAMES
+    assert "venue_token_overlap" not in FEATURE_NAMES
+
+    # 2. Hard-negative mining chọn đúng ứng viên khó (cùng tác giả + từ khóa gần) mà không tính vector cho ứng viên bị loại
+    bib_entries = [
+        {
+            "arxiv_id": "2409.00001",
+            "citation_key": "devlin2018bert",
+            "title": "BERT Pre-training of Deep Bidirectional Transformers",
+            "authors": ["Jacob Devlin"],
+            "year": 2018,
+            "groundtruth_arxiv_id": "1810.04805",
+            "label_method": "manual",
+            "is_labeled": True,
+        },
+        {
+            "arxiv_id": "2409.00001",
+            "citation_key": "unlabeled_entry",
+            "title": "Unlabeled Should Be Skipped",
+            "authors": ["Jacob Devlin"],
+            "year": 2018,
+            "groundtruth_arxiv_id": None,
+            "label_method": "manual",
+            "is_labeled": False,
+        },
+    ]
+    cands = [
+        {"arxiv_id": "2409.00001", "ref_arxiv_id": "1810.04805", "ref_title": "BERT Pre-training of Deep Bidirectional Transformers", "ref_authors": ["Jacob Devlin"], "ref_year": 2018},
+        {"arxiv_id": "2409.00001", "ref_arxiv_id": "1907.11692", "ref_title": "RoBERTa Pre-training of Deep Bidirectional Transformers", "ref_authors": ["Jacob Devlin"], "ref_year": 2019},
+    ] + [
+        {"arxiv_id": "2409.00001", "ref_arxiv_id": f"2001.{i:05d}", "ref_title": f"Unrelated Biology Study {i}", "ref_authors": [f"Biologist {i}"], "ref_year": 2010}
+        for i in range(1, 20)
+    ]
+
+    orig_score_vec = model_module._score_prepared_vector
+    vec_calls = 0
+
+    def spy_score_vec(pb, pc):
+        nonlocal vec_calls
+        vec_calls += 1
+        return orig_score_vec(pb, pc)
+
+    monkeypatch.setattr(model_module, "_score_prepared_vector", spy_score_vec)
+    X_hn, y_hn, meta_hn = build_pairwise_dataset(
+        bib_entries, cands, negative_sample_ratio=4, hard_negative_fraction=0.5, seed=42, skip_unlabeled=True
+    )
+    assert len(X_hn) == 5  # 1 pos + 4 negs (entry unlabeled đã bị bỏ qua)
+    assert vec_calls == 5  # Không tính vector cho các negative bị loại
+    assert any(m["ref_arxiv_id"] == "1907.11692" for m in meta_hn)
+    assert all(m["citation_key"] != "unlabeled_entry" for m in meta_hn)
+
+    # 3. Pairwise Preference Dataset + LearnedRanker(model_type='pairwise_logistic') + sample_weight
+    monkeypatch.setattr(model_module, "_score_prepared_vector", orig_score_vec)
+    X_pref, y_pref, w_pref, _ = build_preference_dataset(
+        bib_entries, cands, negative_sample_ratio=4, hard_negative_fraction=0.5, seed=42, manual_sample_weight=5.0
+    )
+    assert len(X_pref) == 8  # 4 negs * 2 (symmetric)
+    assert y_pref.count(1) == 4 and y_pref.count(0) == 4
+    assert all(w == 5.0 for w in w_pref)
+
+    pw_ranker = LearnedRanker(model_type="pairwise_logistic", C=1.0, random_state=42)
+    pw_ranker.fit(X_pref, y_pref, sample_weight=w_pref)
+    assert pw_ranker.is_fitted
+    assert hasattr(pw_ranker.get_final_estimator(), "coef_")
+    ranked = pw_ranker.rank_candidates(bib_entries[0], cands)
+    assert ranked[0][0] == "1810.04805"
+
+    preds = predict_top_k_candidates([bib_entries[0]], cands, model=pw_ranker, k=5)
+    assert preds[0]["cand_1"] == "1810.04805"
